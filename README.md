@@ -59,3 +59,12 @@ sudo bash deploy/setup_vm.sh
 ```
 
 Instala Python 3.11, crea el venv, copia `copiloto-bot.service` y `copiloto-app.service` (ambos `Restart=always`, `EnvironmentFile=.env`) y los habilita. Abrir el puerto 8501 en el firewall de GCP para la URL pública.
+
+**Región de la VM**: Binance (mainnet, testnet y Options) bloquea las IPs de Estados Unidos con error 451. La VM debe crearse fuera de EE. UU.; la del proyecto está en `northamerica-south1` (Querétaro, México), desde donde todas las APIs responden. Comandos usados:
+
+```bash
+gcloud compute instances create copiloto-mx --zone=northamerica-south1-a --machine-type=e2-medium --image-family=ubuntu-2204-lts --image-project=ubuntu-os-cloud --boot-disk-size=30GB --tags=copiloto
+gcloud compute firewall-rules create copiloto-8501 --allow=tcp:8501 --target-tags=copiloto --source-ranges=0.0.0.0/0
+```
+
+Para actualizar el código en la VM: `cd /opt/copiloto-opciones && sudo git pull && sudo systemctl restart copiloto-bot copiloto-app`.

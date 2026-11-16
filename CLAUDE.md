@@ -305,7 +305,7 @@ Feed en vivo de `events` con filtros por canal; vista tipo chat con colores por 
 - Todo se muestra en la pestaña del bot y se exporta a CSV/PNG para el informe en PDF.
 
 ## 9. Despliegue en la VM
-- Compute Engine e2-medium, Ubuntu 22.04, 20–30 GB.
+- Compute Engine e2-medium, Ubuntu 22.04, 20–30 GB, **fuera de EE. UU.** (Binance devuelve 451 a IPs estadounidenses); se usa `northamerica-south1` (Querétaro).
 - Dos servicios systemd: `copiloto-bot.service` (runner) y `copiloto-app.service` (Streamlit en 0.0.0.0:8501), ambos con `Restart=always` y `EnvironmentFile=.env`.
 - Regla de firewall para el puerto de la app → URL pública para la clase.
 - Alerta de presupuesto en GCP; límites de gasto en Together y xAI.
