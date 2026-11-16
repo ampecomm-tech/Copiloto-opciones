@@ -1,0 +1,91 @@
+# Parámetros del Copiloto de Opciones. Nada de esto se hardcodea en el código.
+
+app:
+  titulo: "Copiloto de Opciones con IA"
+  activos_por_defecto: ["BTC", "ETH", "NVDA", "AAPL", "SPY"]
+  autorefresco_centro_control_s: 5
+  tasa_libre_riesgo: 0.045
+
+agentes:
+  proveedor: together          # la mesa corre en Together; un rol con modelo "gemini" usa Gemini
+  timeout_s: 60
+  max_tokens: 4000             # los modelos serverless de Together razonan antes de responder y consumen tokens en ello
+  temperatura: 0.2
+  modelos:                     # solo modelos disponibles en serverless para esta cuenta (verificado con scripts/check_apis.py, nov 2026)
+    analista: "gemini"         # el analista de mercado corre con Gemini (mezcla de proveedores)
+    sentimiento: "meta-models/Muse-Glimmer-30B"      # Meta · $0.35 / $1.5 por M tokens
+    abogado_diablo: "deepseek-ai/DeepSeek-V4.1-Flash" # DeepSeek · $0.3 / $1.2 por M tokens
+    juez: "openai/gpt-oss-120b"                       # OpenAI (pesos abiertos) · $0.15 / $0.6 por M tokens
+    opinion: "openai/gpt-oss-120b"
+
+gemini:                        # API de AI Studio (SDK google-genai); el modelo va en GEMINI_MODEL (.env)
+  temperatura: 0.3
+  max_tokens: 1200
+
+ejecucion:                     # qué pasa al Confirmar en el copiloto
+  forzar_paper: false          # true = todo en paper interno aunque haya claves
+  venue_cripto: "deribit_testnet"   # deribit_testnet (BTC/ETH, test.deribit.com) | binance_options_testnet
+  binance_options_testnet_url: "https://demo-fapi.binance.com"
+  mercado_cerrado: "cola"      # Alpaca fuera de horario: "cola" (envía y espera la apertura) | "cancelar" (paper interno)
+
+sentimiento:
+  modelo_grok: "grok-4-fast"
+  ttl_min: 15
+  max_posts: 8
+
+opciones:
+  max_vencimientos: 4
+  max_strikes_por_lado: 6
+  min_open_interest: 10
+  max_spread_relativo: 0.25
+  montecarlo_trayectorias: 10000
+  montecarlo_semilla: 42
+  top_n: 3
+
+semaforo:
+  prob_ganancia_min_verde: 0.45
+  prob_ganancia_min_amarillo: 0.30
+  ratio_ganancia_riesgo_min: 0.5
+  iv_hv_max_para_comprar: 1.4
+  iv_hv_min_para_vender: 0.8
+  spread_relativo_max: 0.15
+  theta_diario_max_pct_presupuesto: 0.03
+
+posiciones:
+  umbral_delta_dolares: 500
+  pct_toma_ganancia: 0.5
+  dias_vencimiento_alerta: 3
+  intervalo_refresco_min: 5
+
+bot:
+  timeframe: "15m"
+  velas_historico: 1500
+  intervalo_ciclo_s: 60
+  capital_inicial_por_estrategia: 1000
+  forzar_paper: false          # true = el bot no envía órdenes a Binance testnet ni Alpaca (solo paper interno)
+  resumen_diario_hora_utc: 23  # hora UTC del resumen diario de Gemini en #sistema
+  estrategias_por_defecto: ["random_forest", "ema50_chandelier", "rsi_reversion", "macd_cross", "voting"]
+  riesgo:
+    atr_periodo: 14
+    sl_atr_mult: 1.5
+    tp_atr_mult: 3.0
+    riesgo_por_operacion_pct: 0.02
+    perdida_diaria_max_pct: 0.05
+  random_forest:
+    umbral_compra: 0.58
+    umbral_venta: 0.42
+    horizonte_velas: 4
+    hiperparametros_base:
+      n_estimators: 200
+      max_depth: 6
+      min_samples_leaf: 5
+    grid:
+      n_estimators: [50, 100, 200]
+      max_depth: [3, 6, 10]
+      min_samples_leaf: [1, 5, 10]
+
+eventos_macro:
+  - fecha: "2026-11-18"
+    descripcion: "Minutas de la Fed"
+  - fecha: "2026-12-10"
+    descripcion: "CPI de EE.UU."

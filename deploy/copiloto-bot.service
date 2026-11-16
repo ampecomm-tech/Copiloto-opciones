@@ -1,0 +1,19 @@
+[Unit]
+Description=Copiloto de Opciones - bot de trading 24/7
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=copiloto
+WorkingDirectory=/opt/copiloto-opciones
+EnvironmentFile=/opt/copiloto-opciones/.env
+Environment=PYTHONPATH=/opt/copiloto-opciones
+ExecStart=/opt/copiloto-opciones/.venv/bin/python -m bot.runner
+Restart=always
+RestartSec=10
+StandardOutput=append:/opt/copiloto-opciones/logs/bot.stdout.log
+StandardError=append:/opt/copiloto-opciones/logs/bot.stderr.log
+
+[Install]
+WantedBy=multi-user.target

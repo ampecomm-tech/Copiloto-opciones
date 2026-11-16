@@ -1,0 +1,19 @@
+[Unit]
+Description=Copiloto de Opciones - app Streamlit
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=copiloto
+WorkingDirectory=/opt/copiloto-opciones
+EnvironmentFile=/opt/copiloto-opciones/.env
+Environment=PYTHONPATH=/opt/copiloto-opciones
+ExecStart=/opt/copiloto-opciones/.venv/bin/streamlit run app/main.py --server.address 0.0.0.0 --server.port 8501 --server.headless true
+Restart=always
+RestartSec=5
+StandardOutput=append:/opt/copiloto-opciones/logs/app.stdout.log
+StandardError=append:/opt/copiloto-opciones/logs/app.stderr.log
+
+[Install]
+WantedBy=multi-user.target
