@@ -374,6 +374,7 @@ Feed en vivo de `events` con filtros por canal; vista tipo chat con colores por 
 - **xAI Grok**: sin llave; es opcional. El proveedor de sentimiento por defecto es Gemini.
 - **Testnet de opciones de Binance**: `demo-fapi.binance.com` responde 403 en `/eapi`; por eso la ejecución cripto va a Deribit testnet (`config.ejecucion.venue_cripto`). Deribit testnet solo tiene BTC y ETH; otros subyacentes caen a paper con aviso en `#sistema`.
 - La API key de Deribit tiene scope `trade:read_write`; desde la Mac no lee saldo (falta `account:read`), desde la VM sí.
+- **Diseño (16 nov)**: tema oscuro con un solo acento azul en `.streamlit/config.toml`; los mismos colores están en `app/ui.py` (`TOKENS`), junto con el CSS global, los componentes (pastillas, franja de datos, filas del feed, tabla de patas) y `estilo_figura()` para Plotly. Sin emojis: íconos `:material/...:`. Los cambios en `app/pages/*.py` y en `config.toml` no se recargan en caliente (las páginas se importan con `importlib`): reiniciar Streamlit.
 - **Rutas de Streamlit**: los `url_path` de `st.navigation` en `app/main.py` no deben coincidir con los nombres de archivo de `app/pages/` (p. ej. `copiloto`), porque una URL directa ejecutaría la página automática sin el resto de la app.
 - El bot en la VM opera en Binance spot testnet y Alpaca Paper (`bot.forzar_paper: false`). Para dejarlo solo en paper interno, poner `forzar_paper: true` en `bot` y en `ejecucion` de `config.yaml`.
 
@@ -381,4 +382,3 @@ Feed en vivo de `events` con filtros por canal; vista tipo chat con colores por 
 1. Registrarse en la URL pública y agregar activos al bot desde la pestaña Bot (Bitcoin y Solana → `binance_spot_testnet`, NVDA → `alpaca_paper`) para que acumule señales y operaciones.
 2. Exportar desde la pestaña Bot las tablas de hiperparámetros, métricas y Diebold-Mariano, y desde el Copiloto la tabla "Black-Scholes vs mark price de Binance", para el informe PDF.
 3. Grabar el video de respaldo y ensayar con el Centro de control abierto.
-4. Opcional: cambios de diseño (`app/ui.py`, páginas y un `.streamlit/config.toml` para el tema).

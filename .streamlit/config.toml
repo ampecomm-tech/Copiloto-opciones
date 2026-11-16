@@ -1,0 +1,60 @@
+# Tema global del Copiloto de Opciones.
+# Un solo color de acento (azul); verde/rojo/amarillo se reservan para P&L y semáforo.
+# Los mismos tokens se repiten en app/ui.py (TOKENS) para el CSS y las gráficas de Plotly.
+
+[client]
+toolbarMode = "minimal"
+
+[browser]
+gatherUsageStats = false
+
+[theme]
+base = "dark"
+primaryColor = "#5B8CFF"
+backgroundColor = "#0B0E13"
+secondaryBackgroundColor = "#141922"
+textColor = "#E7EAEE"
+borderColor = "#232A35"
+showWidgetBorder = true
+linkColor = "#8FB0FF"
+linkUnderline = false
+
+greenColor = "#3DD68C"
+redColor = "#F2555A"
+yellowColor = "#F5C04A"
+blueColor = "#5B8CFF"
+orangeColor = "#F59E4A"
+violetColor = "#A78BFA"
+grayColor = "#8A94A6"
+greenBackgroundColor = "rgba(61, 214, 140, 0.10)"
+redBackgroundColor = "rgba(242, 85, 90, 0.10)"
+yellowBackgroundColor = "rgba(245, 192, 74, 0.10)"
+blueBackgroundColor = "rgba(91, 140, 255, 0.10)"
+greenTextColor = "#5FE3A3"
+redTextColor = "#FF7B7F"
+yellowTextColor = "#F7CD6B"
+blueTextColor = "#8FB0FF"
+
+font = "Inter:https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
+codeFont = "JetBrains Mono:https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&display=swap"
+baseFontSize = 15
+headingFontSizes = ["1.75rem", "1.25rem", "1.0625rem", "1rem", "0.9375rem", "0.875rem"]
+headingFontWeights = [650, 600, 600, 600, 600, 600]
+metricValueFontSize = "1.625rem"
+metricValueFontWeight = 600
+codeFontSize = "0.8125rem"
+codeTextColor = "#C9D3E3"
+codeBackgroundColor = "#1A202B"
+
+baseRadius = "10px"
+buttonRadius = "8px"
+dataframeBorderColor = "#232A35"
+dataframeHeaderBackgroundColor = "#11151C"
+dataframeHeaderTextColor = "#8A94A6"
+
+chartCategoricalColors = ["#5B8CFF", "#3DD68C", "#F59E4A", "#A78BFA", "#F2555A", "#4FC3D9", "#F5C04A", "#8A94A6"]
+
+[theme.sidebar]
+backgroundColor = "#0F131A"
+secondaryBackgroundColor = "#161C26"
+borderColor = "#1E2530"
