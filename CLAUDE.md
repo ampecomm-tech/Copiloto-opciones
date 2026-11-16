@@ -352,3 +352,33 @@ Feed en vivo de `events` con filtros por canal; vista tipo chat con colores por 
 - [ ] Tabla de hiperparámetros, métricas y Diebold-Mariano visibles por activo.
 - [ ] El bot sobrevive a un reinicio de la VM (systemd).
 - [ ] Video de respaldo grabado.
+
+## 13. Estado del proyecto (actualizado 16 de noviembre de 2026)
+
+> Sección para quien retome el trabajo. Léela antes de tocar nada. No contiene claves: todas están en `.env` (local y en la VM).
+
+### Qué está hecho y verificado
+- Todo el código de las secciones 1–10 está implementado y probado: `pytest` (23 pruebas) y `scripts/check_apis.py` (16/16 conexiones) pasan desde la Mac y desde la VM.
+- **Repositorio**: `https://github.com/ampecomm-tech/Copiloto-opciones` (privado, rama `main`). En la Mac, `gh` y `gcloud` están instalados y autenticados.
+- **VM de producción**: `copiloto-mx`, proyecto GCP `copiloto-opciones`, zona `northamerica-south1-a` (Querétaro), e2-medium, IP pública `34.51.52.155`, app en `http://34.51.52.155:8501`. Código en `/opt/copiloto-opciones`, servicios `copiloto-bot` y `copiloto-app` (sobreviven al reinicio, verificado), logs en `/opt/copiloto-opciones/logs/`. Firewall `copiloto-8501`. Alerta de presupuesto de 15 USD.
+  - Entrar: `gcloud compute ssh copiloto-mx --zone=northamerica-south1-a`.
+  - Actualizar código: hacer push a `main`; en la VM `cd /opt/copiloto-opciones && sudo git pull && sudo systemctl restart copiloto-bot copiloto-app` (el clon inicial se hizo con un git bundle; si `git pull` pide credenciales, usar un token de GitHub o subir un bundle nuevo con `gcloud compute scp`).
+  - Subir un `.env` nuevo: `gcloud compute scp .env copiloto-mx:~/ --zone=northamerica-south1-a` y luego `sudo cp ~/.env /opt/copiloto-opciones/.env && sudo systemctl restart copiloto-bot copiloto-app`.
+- **Entorno local (Mac)**: `.venv/` creado con el Python 3.12 de conda (`~/anaconda3/envs/bmv/bin/python`); el Python del sistema es 3.9 y no sirve. `requirements.txt` fija `cryptography<45` porque la versión nueva no carga en esta Mac. Arrancar: `.venv/bin/streamlit run app/main.py --server.port 8501`.
+- Ejecución real verificada: órdenes de opciones BTC en el testnet de Deribit (long call ejecutada, spread parcial) y orden multipata de NVDA en Alpaca Paper (en cola fuera de horario).
+
+### Decisiones y limitaciones conocidas (no son bugs)
+- **Binance bloquea IPs de EE. UU. (error 451)**: por eso la VM está en Querétaro y no en us-central1. No mover la VM a una región estadounidense.
+- **Together AI**: solo 22 de 178 modelos están disponibles en serverless para esta cuenta (los Llama clásicos, Qwen y Mistral piden endpoint dedicado). Los asignados en `config.yaml` (`openai/gpt-oss-120b`, `deepseek-ai/DeepSeek-V4.1-Flash`, `meta-models/Muse-Glimmer-30B`) son modelos de razonamiento: necesitan `max_tokens` ≥ 4000 o devuelven contenido vacío. Para cambiar modelos, sondear primero con una llamada mínima; la API no marca cuáles son serverless.
+- **Gemini**: funciona en modo normal y JSON; la búsqueda de Google (grounding) devuelve 429 por cuota del plan. El sentimiento usa los titulares descargados y lo muestra como "Gemini + titulares (sin Google Search)". Si se activa facturación en AI Studio, el grounding se reactiva solo (se reintenta cada hora).
+- **xAI Grok**: sin llave; es opcional. El proveedor de sentimiento por defecto es Gemini.
+- **Testnet de opciones de Binance**: `demo-fapi.binance.com` responde 403 en `/eapi`; por eso la ejecución cripto va a Deribit testnet (`config.ejecucion.venue_cripto`). Deribit testnet solo tiene BTC y ETH; otros subyacentes caen a paper con aviso en `#sistema`.
+- La API key de Deribit tiene scope `trade:read_write`; desde la Mac no lee saldo (falta `account:read`), desde la VM sí.
+- **Rutas de Streamlit**: los `url_path` de `st.navigation` en `app/main.py` no deben coincidir con los nombres de archivo de `app/pages/` (p. ej. `copiloto`), porque una URL directa ejecutaría la página automática sin el resto de la app.
+- El bot en la VM opera en Binance spot testnet y Alpaca Paper (`bot.forzar_paper: false`). Para dejarlo solo en paper interno, poner `forzar_paper: true` en `bot` y en `ejecucion` de `config.yaml`.
+
+### Pendiente antes de la demo (jueves 19)
+1. Registrarse en la URL pública y agregar activos al bot desde la pestaña Bot (Bitcoin y Solana → `binance_spot_testnet`, NVDA → `alpaca_paper`) para que acumule señales y operaciones.
+2. Exportar desde la pestaña Bot las tablas de hiperparámetros, métricas y Diebold-Mariano, y desde el Copiloto la tabla "Black-Scholes vs mark price de Binance", para el informe PDF.
+3. Grabar el video de respaldo y ensayar con el Centro de control abierto.
+4. Opcional: cambios de diseño (`app/ui.py`, páginas y un `.streamlit/config.toml` para el tema).
