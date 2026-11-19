@@ -493,6 +493,9 @@ def contenido(datos: dict[str, Any]) -> list[Any]:
                  f"entrada. Esto produjo {vela} cierres un minuto después de abrir. Se corrigió el 18 de noviembre: cada vela se revisa una sola vez y nunca la de entrada.",
                  "<b>Cantidad cero en Alpaca.</b> Alpaca responde al envío de una orden con cero acciones ejecutadas. El bot guardaba ese valor, y al cerrar enviaba órdenes "
                  "de cero acciones que Alpaca rechazaba. El broker acumuló un corto de 72 acciones de NVDA. Se corrigió confirmando el llenado antes de registrar la posición.",
+                 "<b>Estrategias que comparten cuenta.</b> Alpaca guarda una sola posición neta por activo, mientras el bot lleva una por estrategia. "
+                 "Cuando Alpaca rechazaba una apertura, esta quedaba en paper, pero su cierre se enviaba al broker y dejaba acciones reales sin seguimiento. "
+                 "Se corrigió el 19 de noviembre: cada posición se cierra en el mismo venue donde se abrió.",
                  "<b>Bloqueo geográfico.</b> Binance responde con error 451 a IPs de Estados Unidos, por eso la VM está en Querétaro y no en us-central1.",
                  "<b>Testnets inestables.</b> El testnet de Binance se reinicia periódicamente. La base de datos es la fuente de verdad y el bot reconcilia al arrancar. "
                  "Si un venue rechaza una orden, se usa paper interno y se avisa en #sistema.",
@@ -559,7 +562,7 @@ def contenido(datos: dict[str, Any]) -> list[Any]:
                  ["scripts/", "check_apis.py, exportar_resultados.py, crear_notebook.py y generar_informe.py"],
                  ["docs/", "Este informe, la presentación y las tablas y gráficas en docs/resultados/"],
                  ["deploy/", "Servicios systemd y setup_vm.sh"],
-                 ["tests/", "35 pruebas de Black-Scholes, Diebold-Mariano, semáforo, estrategias, ejecución y trailing stop"]],
+                 ["tests/", "39 pruebas de Black-Scholes, Diebold-Mariano, semáforo, estrategias, ejecución, trailing stop y venue de cierre"]],
                 [3.2 * cm, 14.2 * cm]),
           Spacer(1, 8),
           P("Para reproducir los resultados:"),

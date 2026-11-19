@@ -76,10 +76,24 @@ def _sentimiento(symbol: str) -> float | None:
     return ultimo_score(base)
 
 
+def venue_de_cierre(asset: dict[str, Any], pos: dict[str, Any]) -> str:
+    """Venue donde debe cerrarse la posición: el mismo donde se abrió.
+
+    Si la apertura cayó a paper interno, el cierre también va a paper; así el broker nunca recibe
+    el cierre de una posición que no tiene. Para posiciones anteriores a este campo se usa el id de
+    orden guardado: sin id, la apertura fue en paper.
+    """
+    modo = pos.get("modo")
+    if modo is None:
+        fila = db.consultar_uno("SELECT venue_order_id FROM bot_trades WHERE id = ?", (pos.get("trade_id"),))
+        modo = asset["venue"] if fila and fila.get("venue_order_id") else "paper"
+    return "paper" if modo == "paper" else asset["venue"]
+
+
 def _cerrar(asset: dict[str, Any], estado: dict[str, Any], pos: dict[str, Any], precio: float, razon: str) -> None:
-    """Cierra la posición abierta, registra el trade y actualiza capital y P&L diario."""
+    """Cierra la posición abierta en el venue donde se abrió, registra el trade y actualiza capital y P&L diario."""
     lado_orden = "sell" if pos["side"] == "long" else "buy"
-    orden = ejecutar_orden(asset["symbol"], asset["venue"], lado_orden, pos["qty"], precio)
+    orden = ejecutar_orden(asset["symbol"], venue_de_cierre(asset, pos), lado_orden, pos["qty"], precio)
     px = orden["precio"]
     pnl = (px - pos["entry_price"]) * pos["qty"] if pos["side"] == "long" else (pos["entry_price"] - px) * pos["qty"]
     nuevo_capital = estado["capital"] + pnl
@@ -118,7 +132,7 @@ def _abrir(asset: dict[str, Any], estado: dict[str, Any], lado: str, precio: flo
     trade_id = db.ejecutar("INSERT INTO bot_trades(asset_id, strategy, side, qty, entry_price, sl, tp, entry_ts, venue_order_id) VALUES (?,?,?,?,?,?,?,?,?)",
                            (asset["id"], estado["strategy"], lado, orden["qty"], px, sl, tp, db.ahora_iso(), orden["venue_order_id"]))
     pos = {"side": lado, "qty": orden["qty"], "entry_price": px, "sl": sl, "tp": tp, "trade_id": trade_id, "entry_ts": db.ahora_iso(),
-           "extremo": px, "trailing_activo": False, "vela_revisada": ts_vela}
+           "extremo": px, "trailing_activo": False, "vela_revisada": ts_vela, "modo": orden["modo"]}
     db.ejecutar("UPDATE bot_strategy_state SET position_json=? WHERE asset_id=? AND strategy=?", (db.a_json(pos), asset["id"], estado["strategy"]))
     datos = {"qty": orden["qty"], "sl": round(sl, 4), "tp": round(tp, 4), "atr": round(atr_valor, 4), "modo": orden["modo"], "razon": detalles.get("razon", "")}
     titulo = f"Apertura {lado} {asset['symbol']} [{estado['strategy']}] @ {px:,.4f}"

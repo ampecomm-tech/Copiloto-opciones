@@ -144,6 +144,8 @@ def reconciliar() -> dict[str, Any]:
         resumen["alpaca"] = {p["symbol"]: float(p.get("qty") or 0) for p in alpaca.posiciones()}
     for est in db.consultar("SELECT s.*, a.symbol, a.venue FROM bot_strategy_state s JOIN bot_assets a ON a.id = s.asset_id WHERE s.position_json IS NOT NULL"):
         pos = db.de_json(est["position_json"], {})
+        if pos.get("modo") == "paper":
+            continue  # abierta en paper interno: no existe en el venue y no debe buscarse ahí
         if est["venue"] == "binance_spot_testnet" and isinstance(resumen["binance"], dict):
             base = est["symbol"].split("/")[0]
             if pos.get("side") == "long" and resumen["binance"].get(base, 0.0) < pos.get("qty", 0) * 0.5:

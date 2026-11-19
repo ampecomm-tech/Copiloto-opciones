@@ -14,7 +14,7 @@ Proyecto final de Finanzas Computacionales. App web (Streamlit) donde el usuario
 | Notebook de validación, ejecutado con datos reales | [notebooks/validacion_cuantitativa.ipynb](notebooks/validacion_cuantitativa.ipynb) |
 | Tablas y gráficas de resultados (CSV y PNG) | [docs/resultados/](docs/resultados/) |
 | Código documentado con docstrings en español | `app/`, `core/`, `quant/`, `agents/`, `bot/`, `validation/` |
-| Pruebas automáticas (35) | `tests/` |
+| Pruebas automáticas (39) | `tests/` |
 
 ## Opciones del curso que cubre
 

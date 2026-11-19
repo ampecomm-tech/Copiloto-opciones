@@ -146,3 +146,49 @@ def test_alpaca_formato_de_cantidad(monkeypatch, qty, corto, esperado):
     monkeypatch.setattr(executor.alpaca.requests, "post", lambda url, headers, json, timeout: enviado.update(json) or Resp())
     executor.alpaca.enviar_orden_accion("NVDA", "sell", qty, corto)
     assert enviado["qty"] == esperado
+
+
+@pytest.fixture
+def cierre_prueba(tmp_path, monkeypatch):
+    """Base temporal con un activo de Alpaca y el envío de órdenes interceptado."""
+    monkeypatch.setenv("DB_PATH", str(tmp_path / "cierre.db"))
+    db.inicializar()
+    aid = db.ejecutar("INSERT INTO bot_assets(symbol, display_name, market_type, venue, active, added_ts, training_status) VALUES ('INTC','Intel','accion','alpaca_paper',1,?,'listo')", (db.ahora_iso(),))
+    db.ejecutar("INSERT INTO bot_strategy_state(asset_id, strategy, active, capital, position_json, daily_pnl, daily_date) VALUES (?,'voting',1,1000,NULL,0,'')", (aid,))
+    enviadas = []
+    monkeypatch.setattr(runner, "emit", lambda *a, **k: None)
+    monkeypatch.setattr(runner, "_explicar_async", lambda *a, **k: None)
+    monkeypatch.setattr(runner, "ejecutar_orden", lambda s, v, l, q, p, **k: enviadas.append(v) or {"precio": p, "qty": q, "venue_order_id": None, "modo": v})
+    asset = db.consultar_uno("SELECT * FROM bot_assets WHERE id=?", (aid,))
+    estado = db.consultar_uno("SELECT * FROM bot_strategy_state WHERE asset_id=?", (aid,))
+
+    def trade(venue_order_id):
+        """Registra una operación abierta con o sin id de orden del broker."""
+        return db.ejecutar("INSERT INTO bot_trades(asset_id, strategy, side, qty, entry_price, sl, tp, entry_ts, venue_order_id) VALUES (?,'voting','short',14,55.5,57,52.6,?,?)",
+                           (aid, db.ahora_iso(), venue_order_id))
+
+    return asset, estado, enviadas, trade
+
+
+def test_apertura_en_paper_se_cierra_en_paper(cierre_prueba):
+    """Un corto que Alpaca rechazó y quedó en paper no manda una compra real al cerrarse."""
+    asset, estado, enviadas, trade = cierre_prueba
+    pos = {"side": "short", "qty": 14.0, "entry_price": 55.5, "sl": 57.0, "tp": 52.6, "trade_id": trade(None), "modo": "paper"}
+    runner._cerrar(asset, estado, pos, 57.0, "SL")
+    assert enviadas == ["paper"]
+
+
+def test_apertura_en_alpaca_se_cierra_en_alpaca(cierre_prueba):
+    """Una posición abierta en el broker se cierra en el broker."""
+    asset, estado, enviadas, trade = cierre_prueba
+    pos = {"side": "short", "qty": 14.0, "entry_price": 55.5, "sl": 57.0, "tp": 52.6, "trade_id": trade("orden-1"), "modo": "alpaca_paper"}
+    runner._cerrar(asset, estado, pos, 57.0, "SL")
+    assert enviadas == ["alpaca_paper"]
+
+
+@pytest.mark.parametrize("orden_id, esperado", [(None, "paper"), ("orden-1", "alpaca_paper")])
+def test_posiciones_anteriores_usan_el_id_de_orden(cierre_prueba, orden_id, esperado):
+    """Sin el campo `modo`, el venue de cierre se deduce de si la apertura tuvo id de orden."""
+    asset, _, _, trade = cierre_prueba
+    pos = {"side": "short", "qty": 14.0, "trade_id": trade(orden_id)}
+    assert runner.venue_de_cierre(asset, pos) == esperado
