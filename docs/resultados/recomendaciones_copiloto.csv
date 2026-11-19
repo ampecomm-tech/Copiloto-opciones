@@ -4,3 +4,4 @@ fecha,activo,direccion,magnitud_pct,horizonte_dias,presupuesto,semaforo,estrateg
 2026-11-18 00:30,SOL,alcista,12.0,14,500.0,amarillo,Bull call spread 78/80 (2d)
 2026-11-18 00:39,BTC,bajista,8.16,14,1000.0,verde,Bear put spread 62000/58000 (16d)
 2026-11-18 00:59,BTC,volatil,5.0,7,500.0,amarillo,Long straddle 65000 (9d)
+2026-11-19 18:20,BTC,bajista,4.4,7,500.0,verde,Bear put spread 61000/56000 (8d)

@@ -324,6 +324,149 @@ def resumen_sistema(datos: dict[str, pd.DataFrame], salida: Path) -> dict[str, A
     return res
 
 
+def _retornos(symbol: str, venue: str) -> pd.Series:
+    """Retornos de 15 minutos en % del activo (Binance mainnet para cripto, yfinance para acciones)."""
+    from data_sources.market import velas
+
+    return velas(symbol, venue)["close"].pct_change().dropna() * 100
+
+
+def _histo_var(ax: Any, x: np.ndarray, r: dict[str, Any], titulo: str, eje: str, normal: bool = False) -> None:
+    """Histograma con la cola del 5 % en rojo, líneas de VaR y CVaR al 95 % y, opcionalmente, la normal ajustada."""
+    from scipy import stats as sst
+
+    if len(x) > 200:
+        lo, hi = np.quantile(x, [0.002, 0.998])
+        x = x[(x >= min(lo, -r["cvar_95"] * 1.1)) & (x <= hi)]
+    h, b = np.histogram(x, bins=int(min(60, max(10, len(x) // 4))))
+    c = (b[:-1] + b[1:]) / 2
+    ax.bar(c, h, width=(b[1] - b[0]) * 0.9, color=[ROJO if v <= -r["var_95"] else AZUL for v in c])
+    if normal:
+        m = np.linspace(b[0], b[-1], 200)
+        ax.plot(m, sst.norm.pdf(m, r["media"], r["desviacion"]) * len(x) * (b[1] - b[0]), color=GRIS, ls=":", lw=1.4, label="Normal ajustada")
+    ax.axvline(-r["var_95"], color="#d97706", ls="--", lw=1.6, label=f"VaR 95 %: {-r['var_95']:.3f}")
+    ax.axvline(-r["cvar_95"], color=ROJO, lw=1.6, label=f"CVaR 95 %: {-r['cvar_95']:.3f}")
+    ax.set(title=titulo, xlabel=eje, ylabel="Frecuencia")
+    ax.legend(frameon=False, fontsize=7)
+
+
+def riesgo_bot(datos: dict[str, pd.DataFrame], salida: Path) -> pd.DataFrame:
+    """VaR y CVaR (históricos y normales, 95 y 99 %) de los retornos de 15 min de cada activo y del P&L de sus operaciones."""
+    from quant.riesgo import resumen_riesgo
+
+    activos = datos["trades"][["symbol", "venue"]].drop_duplicates().values.tolist()
+    filas, figs = [], []
+    for symbol, venue in activos:
+        try:
+            r = _retornos(symbol, venue)
+        except Exception as e:
+            print(f"Sin velas para {symbol}: {e}")
+            continue
+        rr = resumen_riesgo(r.values)
+        t = datos["trades"][(datos["trades"]["symbol"] == symbol) & datos["trades"]["exit_ts"].notna() & (datos["trades"]["qty"] > 0)]["pnl"].dropna()
+        rt = resumen_riesgo(t.values) if len(t) >= 5 else {}
+        filas.append({"activo": symbol, "velas": rr["n"], "var95_hist_pct": rr["var_95"], "cvar95_hist_pct": rr["cvar_95"], "var95_normal_pct": rr["var_95_normal"],
+                      "cvar95_normal_pct": rr["cvar_95_normal"], "var99_hist_pct": rr["var_99"], "cvar99_hist_pct": rr["cvar_99"], "curtosis": rr["curtosis"],
+                      "operaciones": len(t), "var95_operacion_usd": rt.get("var_95"), "cvar95_operacion_usd": rt.get("cvar_95")})
+        if symbol in ("BTC/USDT", "NVDA"):
+            figs.append((symbol, r.values, rr))
+    tabla = pd.DataFrame(filas)
+    tabla.round(4).to_csv(salida / "riesgo_bot.csv", index=False)
+    if figs:
+        fig, ejes = plt.subplots(1, len(figs), figsize=(5.4 * len(figs), 3.4))
+        for ax, (s, x, rr) in zip(np.atleast_1d(ejes), figs):
+            _histo_var(ax, x, rr, f"{s}: retornos de 15 min", "Retorno por vela (%)", normal=True)
+        fig.tight_layout()
+        fig.savefig(salida / "var_cvar_bot.png")
+        plt.close(fig)
+    return tabla
+
+
+def caviar_resultados(datos: dict[str, pd.DataFrame], salida: Path) -> pd.DataFrame:
+    """CAViaR (SAV, θ = 5 %) por activo: backtesting fuera de muestra y Diebold-Mariano contra el VaR histórico móvil."""
+    from quant.caviar import analizar
+
+    filas, figura = [], None
+    for symbol, venue in datos["trades"][["symbol", "venue"]].drop_duplicates().values.tolist():
+        try:
+            r = _retornos(symbol, venue)
+            a = analizar(r.values, 0.05, "sav")
+        except Exception as e:
+            print(f"CAViaR omitido para {symbol}: {e}")
+            continue
+        kf, kd, ch, dm = a["kupiec_fuera"], a["kupiec_dentro"], a["christoffersen_fuera"], a.get("dm_vs_historico") or {}
+        filas.append({"activo": symbol, "beta0": a["modelo_ultimo"]["beta"][0], "beta1": a["modelo_ultimo"]["beta"][1], "beta2": a["modelo_ultimo"]["beta"][2],
+                      "violaciones_dentro_pct": kd["tasa"] * 100, "violaciones_fuera_pct": kf["tasa"] * 100, "kupiec_p": kf["p_valor"], "christoffersen_p": ch["p_cc"],
+                      "violaciones_historico_pct": (a.get("kupiec_historico_fuera") or {}).get("tasa", np.nan) * 100,
+                      "perdida_cuantil_caviar": (a.get("perdida_cuantil_fuera") or {}).get("caviar"), "perdida_cuantil_historico": (a.get("perdida_cuantil_fuera") or {}).get("historico"),
+                      "dm_hln": dm.get("dm_hln"), "dm_p": dm.get("p_valor"),
+                      "dm_resultado": {"modelo_1": "CAViaR mejor", "modelo_2": "Histórico mejor"}.get(dm.get("mejor"), "Sin diferencia significativa")})
+        if symbol == "BTC/USDT":
+            figura = (r.index, a)
+    tabla = pd.DataFrame(filas)
+    tabla.round(4).to_csv(salida / "caviar.csv", index=False)
+    if figura:
+        x, a = figura
+        n = len(a["r"])
+        ini = max(0, a["inicio_prueba"] - 250)
+        xs = x[ini:n]
+        r, q, qh = a["r"][ini:], a["q_caviar"][ini:], a["q_historico"][ini:]
+        fig, ax = plt.subplots(figsize=(10, 3.6))
+        ax.axvspan(x[a["inicio_prueba"]], x[-1], color=AZUL, alpha=0.06, label="Fuera de muestra")
+        ax.scatter(xs, r, s=3, color=GRIS, label="Retorno por vela")
+        ax.plot(xs, qh, color=TINTA, lw=1, ls=":", label="VaR histórico móvil")
+        ax.plot(xs, q, color=AZUL, lw=1.4, label="VaR CAViaR")
+        v = r < q
+        ax.scatter(xs[v], r[v], s=16, color=ROJO, marker="x", label="Violación")
+        ax.set(title="BTC/USDT: VaR al 95 % de CAViaR (valor absoluto simétrico) contra el VaR histórico", ylabel="Retorno por vela (%)")
+        ax.legend(ncols=5, fontsize=7, frameon=False, loc="lower left")
+        fig.autofmt_xdate()
+        fig.savefig(salida / "caviar_btc.png")
+        plt.close(fig)
+    return tabla
+
+
+def riesgo_copiloto(salida: Path) -> pd.DataFrame:
+    """Ejemplo en vivo del copiloto en BTC (14 días, 500 USD; opiniones bajista 8 % y neutral 3 %): VaR y CVaR del Monte Carlo de las mejores candidatas."""
+    from data_sources.market import cadena_para
+    from quant.selector import Opinion, seleccionar
+
+    cadena, S, meta = cadena_para("BTC", 0.045, 14)
+    filas, todas = [], []
+    for direccion, mag in (("bajista", 8), ("neutral", 3)):
+        opinion = Opinion(activo="BTC", direccion=direccion, magnitud_pct=mag, horizonte_dias=14, presupuesto=500)
+        for c in seleccionar(cadena, S, opinion, 0.045, meta["multiplicador"], meta["paso_qty"]):
+            c["opinion"] = f"{direccion} {mag} %"
+            todas.append(c)
+    for c in todas:
+        mc = c["montecarlo"]
+        filas.append({"opinion": c["opinion"], "estrategia": c["nombre"], "costo_neto": c["costo_neto"], "perdida_maxima": c["max_perdida"], "prob_ganancia": mc["prob_ganancia"],
+                      "valor_esperado": mc["valor_esperado"], "var95": mc["var_95"], "cvar95": mc["cvar_95"], "var99": mc["var_99"], "cvar99": mc["cvar_99"],
+                      "cvar99_sobre_perdida_max": mc["cvar_99"] / max(c["max_perdida"], 1e-9)})
+    tabla = pd.DataFrame(filas)
+    tabla.round(4).to_csv(salida / "riesgo_copiloto.csv", index=False)
+    if todas:
+        c = next((x for x in todas if x["montecarlo"]["var_95"] < 0.98 * x["max_perdida"]), todas[0])
+        mc = c["montecarlo"]
+        fig, ejes = plt.subplots(1, 2, figsize=(11, 3.5))
+        h = mc["histograma"]
+        ancho = h["x"][1] - h["x"][0]
+        ejes[0].bar(h["x"], h["y"], width=ancho * 0.9, color=[ROJO if v <= -mc["var_95"] + ancho / 2 else ("#f59e0b" if v < 0 else VERDE) for v in h["x"]])
+        ejes[0].axvline(-mc["var_95"], color="#d97706", ls="--", lw=1.6, label=f"VaR 95 %: {-mc['var_95']:,.0f}")
+        ejes[0].axvline(-mc["cvar_95"], color=ROJO, lw=1.6, label=f"CVaR 95 %: {-mc['cvar_95']:,.0f}")
+        ejes[0].set(title=f"{c['nombre']}: P&L simulado (10,000 trayectorias)", xlabel="P&L al horizonte (USD)", ylabel="Trayectorias")
+        ejes[0].legend(frameon=False, fontsize=7)
+        q = mc["cuantiles_pnl"]
+        ejes[1].plot(q[:100], range(100), color=AZUL, lw=2)
+        ejes[1].axhline(5, color="#d97706", ls="--", lw=1)
+        ejes[1].axvline(0, color=GRIS, lw=0.8)
+        ejes[1].set(title=f"Probabilidad acumulada · prob. de ganancia {mc['prob_ganancia']:.0%}", xlabel="P&L al horizonte (USD)", ylabel="P(P&L ≤ x) en %")
+        fig.tight_layout()
+        fig.savefig(salida / "riesgo_copiloto.png")
+        plt.close(fig)
+    return tabla
+
+
 def main() -> None:
     """Punto de entrada: exporta todo a la carpeta de salida."""
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
@@ -346,6 +489,9 @@ def main() -> None:
     if not args.sin_red:
         bs_vs_binance(salida)
         markowitz(salida)
+        riesgo_bot(datos, salida)
+        caviar_resultados(datos, salida)
+        riesgo_copiloto(salida)
     print(f"Resultados en {salida}")
 
 

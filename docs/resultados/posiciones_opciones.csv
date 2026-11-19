@@ -1,5 +1,6 @@
 id,asset,entry_ts,entry_cost,last_value,venue,status
-1,BTC,2026-11-17T19:00:30+00:00,494.0,496.6,deribit_testnet,abierta
+1,BTC,2026-11-17T19:00:30+00:00,494.0,668.2,deribit_testnet,abierta
 2,SOL,2026-11-18T00:36:27+00:00,500.0,138.93,paper,cerrada
-3,BTC,2026-11-18T00:40:52+00:00,994.0,1341.9,deribit_testnet,abierta
-4,BTC,2026-11-18T01:01:54+00:00,475.3,478.8,deribit_testnet,abierta
+3,BTC,2026-11-18T00:40:52+00:00,994.0,1789.2,deribit_testnet,abierta
+4,BTC,2026-11-18T01:01:54+00:00,475.3,543.2,deribit_testnet,abierta
+5,BTC,2026-11-19T18:25:38+00:00,497.0,644.0,paper,abierta

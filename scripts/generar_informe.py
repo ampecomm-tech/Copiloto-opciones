@@ -55,9 +55,16 @@ E = {
 }
 
 
+def _amp(texto: str) -> str:
+    """Escapa los "&" sueltos (como en P&L) para que ReportLab no los lea como entidades."""
+    import re
+
+    return re.sub(r"&(?!#?\w+;)", "&amp;", str(texto))
+
+
 def P(texto: str, estilo: str = "cuerpo") -> Paragraph:
     """Párrafo con el estilo indicado."""
-    return Paragraph(texto, E[estilo])
+    return Paragraph(_amp(texto), E[estilo])
 
 
 def lista(items: list[str]) -> ListFlowable:
@@ -67,7 +74,7 @@ def lista(items: list[str]) -> ListFlowable:
 
 def tabla(filas: list[list[Any]], anchos: list[float] | None = None, resaltar: list[int] | None = None) -> Table:
     """Tabla con encabezado azul, filas alternadas y texto ajustable."""
-    datos = [[Paragraph(str(c), E["celda_b"] if i == 0 else E["celda"]) for c in fila] for i, fila in enumerate(filas)]
+    datos = [[Paragraph(_amp(c), E["celda_b"] if i == 0 else E["celda"]) for c in fila] for i, fila in enumerate(filas)]
     t = Table(datos, colWidths=anchos, repeatRows=1, hAlign="CENTER")
     estilo = [("BACKGROUND", (0, 0), (-1, 0), AZUL), ("VALIGN", (0, 0), (-1, -1), "MIDDLE"), ("GRID", (0, 0), (-1, -1), 0.4, BORDE),
               ("TOPPADDING", (0, 0), (-1, -1), 2.5), ("BOTTOMPADDING", (0, 0), (-1, -1), 2.5), ("LEFTPADDING", (0, 0), (-1, -1), 4), ("RIGHTPADDING", (0, 0), (-1, -1), 4)]
@@ -126,7 +133,7 @@ def diagrama_arquitectura(destino: Path) -> None:
     caja(48, 16, 22, 17, "SQLite WAL + bus emit()", "events · recommendations\noption_positions\nbot_trades · bot_signals\nmodel_runs\nlogs/trading_bot.log", "#fae8ff")
     caja(76, 42, 32, 15, "IA", "Gemini (AI Studio): analista, noticias,\nexplicaciones, resumen, respaldo\nTogether AI: sentimiento, abogado\ndel diablo y juez · Grok opcional", "#ffedd5")
     caja(76, 23, 32, 15, "Datos de mercado", "Binance European Options (eapi)\nBinance spot mainnet (señales)\nAlpaca options data · yfinance\nRSS + Fear & Greed", "#e2e8f0")
-    caja(76, 2, 32, 17, "Ejecución (sin dinero real)", "Deribit testnet: opciones BTC/ETH\nAlpaca Paper: acciones y opciones\nBinance spot testnet: bot cripto\nPaper interno de respaldo", "#fee2e2")
+    caja(76, 2, 32, 17, "Ejecución (sin dinero real)", "Deribit testnet: opciones BTC/ETH\nGate.io testnet: respaldo de opciones\nAlpaca Paper (órdenes netas) · Binance\nspot testnet · paper de respaldo", "#fee2e2")
     caja(24, 1, 46, 10, "Discord (6 canales) + Centro de control", "#mesa-agentes · #sentimiento-x · #bot-señales · #bot-operaciones · #alertas · #sistema", "#ccfbf1")
     flecha(19, 47, 24, 47, "HTTPS")
     flecha(46, 26, 48, 26)
@@ -184,13 +191,15 @@ def _portada(canvas: Any, doc: Any, datos: dict[str, Any]) -> None:
     canvas.setFillColor(TINTA)
     canvas.setFont("DV-B", 10)
     y = H * 0.45 - 2 * cm
-    canvas.drawString(2.2 * cm, y, "Integrantes")
+    canvas.drawString(2.2 * cm, y, "Autor" if len(datos.get("integrantes", [])) == 1 else "Integrantes")
     canvas.setFont("DV", 10)
     for nombre in datos.get("integrantes", []):
         y -= 0.55 * cm
         canvas.drawString(2.2 * cm, y, nombre)
     y -= 1.2 * cm
-    for etiqueta, valor in (("Fecha de entrega y defensa", datos["fecha"]), ("Repositorio", datos["repositorio"]), ("Aplicación en vivo", datos["app"])):
+    for etiqueta, valor in (("Modalidad", datos.get("modalidad", "")), ("Fecha de entrega y defensa", datos["fecha"]), ("Repositorio", datos["repositorio"]), ("Aplicación en vivo", datos["app"])):
+        if not valor:
+            continue
         canvas.setFont("DV-B", 9)
         canvas.drawString(2.2 * cm, y, etiqueta)
         canvas.setFont("DV", 9)
@@ -214,6 +223,21 @@ def _partir(texto: str, n: int) -> list[str]:
     return lineas + ([actual] if actual else [])
 
 
+def _texto_markowitz(corr: pd.DataFrame, mk: pd.DataFrame) -> str:
+    """Comentario de la frontera de Markowitz calculado a partir de las tablas, para que nunca contradiga los números."""
+    def pesos(nombre: str) -> str:
+        fila = mk[mk["cartera"] == nombre].iloc[0]
+        w = sorted(((c.replace("w_", ""), float(fila[c])) for c in mk.columns if c.startswith("w_")), key=lambda t: -t[1])
+        return ", ".join(f"{a} {p:.0%}" for a, p in w if p >= 0.05)
+    ms, mv = mk[mk["cartera"] == "Máximo Sharpe"].iloc[0], mk[mk["cartera"] == "Mínima volatilidad"].iloc[0]
+    btc_sol = float(corr.loc["BTC", "SOL"]) if "BTC" in corr.index and "SOL" in corr.columns else float("nan")
+    return (f"BTC y SOL tienen una correlación de {btc_sol:.2f}, así que repartir capital del bot entre ambos diversifica poco. "
+            f"La cartera de máximo Sharpe ({float(ms['sharpe']):.2f}) queda en {pesos('Máximo Sharpe')}, con volatilidad anual de {float(ms['vol']):.0%}: "
+            "es una cartera concentrada que depende del último año y no conviene usar sin restricciones de peso. "
+            f"La de mínima volatilidad ({float(mv['vol']):.0%} anual) queda en {pesos('Mínima volatilidad')}. "
+            "La frontera es una referencia para repartir el capital del bot entre activos.")
+
+
 def contenido(datos: dict[str, Any]) -> list[Any]:
     """Arma todas las secciones del informe con los resultados exportados."""
     hp = pd.read_csv(RES / "hiperparametros_rf.csv")
@@ -227,6 +251,9 @@ def contenido(datos: dict[str, Any]) -> list[Any]:
     recs = pd.read_csv(RES / "recomendaciones_copiloto.csv")
     ops = pd.read_csv(RES / "posiciones_opciones.csv")
     sis = json.loads((RES / "resumen_sistema.json").read_text(encoding="utf-8"))
+    rb = pd.read_csv(RES / "riesgo_bot.csv")
+    cav = pd.read_csv(RES / "caviar.csv")
+    rc = pd.read_csv(RES / "riesgo_copiloto.csv")
     activos = list(dict.fromkeys(met["activo"]))
     rf = met[met["modelo"] == "Random Forest"].set_index("activo")
     knn = met[met["modelo"] == "KNN (base)"].set_index("activo")
@@ -240,7 +267,8 @@ def contenido(datos: dict[str, Any]) -> list[Any]:
           P("El <b>Copiloto de Opciones con IA</b> es una aplicación web con un solo inicio de sesión donde el usuario se informa sobre un activo, "
             "formula una opinión de mercado y recibe la estrategia de opciones que mejor encaja con ella. Una mesa de agentes de IA de distintos "
             "proveedores debate cada recomendación, y un semáforo determinista de viabilidad decide si conviene entrar. Al confirmar, la orden se "
-            "envía a un venue de prueba: el testnet de Deribit para BTC y ETH, y Alpaca Paper para acciones y ETFs."),
+            "envía a un venue de prueba: el testnet de Deribit para BTC y ETH, con respaldo en el testnet de Gate.io para los demás subyacentes, y Alpaca Paper para acciones y ETFs. "
+            "El proyecto se desarrolló de forma individual."),
           P("En paralelo, un bot de trading corre las 24 horas en una máquina virtual de Google Cloud. El bot opera cualquier activo que el usuario "
             "busque por nombre, con cinco estrategias por activo: un Random Forest entrenado automáticamente, tres estrategias técnicas y una votación. "
             "Todo el razonamiento interno se publica en seis canales de Discord y en la pestaña Centro de control."),
@@ -253,6 +281,9 @@ def contenido(datos: dict[str, Any]) -> list[Any]:
                  "y que no hay diferencia significativa frente al KNN de referencia.",
                  f"En el Binance spot testnet el bot cerró {int(testnet['operaciones_validas'].sum())} operaciones con un P&L total de {pnl_testnet:+.2f} USD "
                  f"sobre {cap_testnet:,.0f} USD de capital virtual, un ROI de {pnl_testnet / cap_testnet * 100:+.2f} %.",
+                 "Riesgo en las dos piezas: el copiloto reporta VaR y CVaR al 95 % y al 99 % de cada estrategia a partir del Monte Carlo, y el bot mide VaR y CVaR "
+                 f"históricos y normales de cada activo y de sus operaciones, además de un VaR dinámico CAViaR que pasa la prueba de Kupiec en "
+                 f"{', '.join(cav[cav['kupiec_p'] >= 0.05]['activo'])}.",
                  f"El sistema registró {sis['senales']:,} señales, {sis['operaciones_bot']} operaciones del bot, {sis['recomendaciones']} recomendaciones del copiloto y "
                  f"{sum(sis['eventos_por_canal'].values()):,} eventos entre el {sis['senales_desde'][:10]} y el {sis['senales_hasta'][:10]}."]),
           P("El valor del proyecto está en la integración: valuación de derivados, simulación, aprendizaje automático validado estadísticamente, agentes de IA "
@@ -273,6 +304,7 @@ def contenido(datos: dict[str, Any]) -> list[Any]:
                  ["3. Bot en VM", "Buy / Hold / Sell con modelo", "Random Forest de 20 variables técnicas y sentimiento", "bot/strategies/random_forest.py"],
                  ["3. Bot en VM", "Simulación de hiperparámetros y DM", "Grid de 27 combinaciones, métricas y Diebold-Mariano HLN", "validation/hyperparams.py, validation/diebold_mariano.py"],
                  ["3. Bot en VM", "Gestión de riesgo", "SL y TP por ATR, trailing stop, tamaño por volatilidad, kill-switch", "bot/risk.py"],
+                 ["3 y 7. Métricas de riesgo", "Riesgo cuantitativo", "VaR y CVaR históricos, normales y de Monte Carlo; CAViaR con Kupiec y Christoffersen", "quant/riesgo.py, quant/caviar.py"],
                  ["3. Bot en VM", "Testnet y ROI simulado", "Binance spot testnet, Alpaca Paper, matriz de confusión en vivo", "bot/executor.py"],
                  ["3. Bot en VM", "VM 24/7 con .env y log", "e2-medium, systemd, .env y logs/trading_bot.log", "deploy/"],
                  ["4. Agentes multirol", "Analista, sentimiento y gestor de riesgo", "Roles con JSON estricto y modelos de distintas empresas", "agents/"]],
@@ -370,7 +402,33 @@ def contenido(datos: dict[str, Any]) -> list[Any]:
           P("La hipótesis nula es igual precisión predictiva. Con un horizonte de h = 4 velas los errores se traslapan, por eso la varianza de largo plazo incluye "
             "autocovarianzas hasta h − 1 y se aplica la corrección de Harvey, Leybourne y Newbold para muestras finitas. Un estadístico negativo con p &lt; 0.05 significa que el "
             "modelo 1, el RF, tiene menor pérdida."),
-          P("5.7 Markowitz y correlación de Pearson", "h2"),
+          P("Configuración de las pruebas de Diebold-Mariano usadas en el proyecto:"),
+          tabla([["Parámetro", "Random Forest contra modelos y estrategias", "CAViaR contra VaR histórico"],
+                 ["Modelo 1 / modelo 2", "Random Forest / KNN (k = 15), EMA50 + Chandelier, reversión RSI y cruce MACD", "CAViaR SAV / VaR histórico móvil de 300 velas"],
+                 ["Qué se pronostica", "Dirección del cierre dentro de 4 velas (una hora)", "Cuantil del 5 % del retorno de la siguiente vela"],
+                 ["Error o pérdida", "Error e<sub>t</sub> = retorno normalizado − (P(sube) − 0.5); pérdida cuadrática e²", "Pérdida de cuantil ρ<sub>θ</sub>(r − q), θ = 0.05"],
+                 ["Horizonte h", "4 velas de 15 min: autocovarianzas hasta el rezago 3", "1 vela"],
+                 ["Muestra", "Tramo de prueba: 30 % final, n = 443, sin barajar", "30 % final, n = 450, reestimado cada 100 velas"],
+                 ["Estadístico", "DM con corrección HLN", "DM con corrección HLN"],
+                 ["Distribución y nivel", "t de Student con n − 1 g.l., bilateral, α = 0.05", "t de Student con n − 1 g.l., bilateral, α = 0.05"]],
+                [3.4 * cm, 7.4 * cm, 6.6 * cm]),
+          P("5.7 Métricas de riesgo", "h2"),
+          P("VaR<sub>α</sub> es la pérdida que solo se supera en el (1 − α) de los peores casos, y CVaR<sub>α</sub>, también llamado Expected Shortfall, es la pérdida "
+            "promedio dentro de esa cola. Ambas se reportan como pérdidas positivas."),
+          P("VaR<sub>α</sub> = −q<sub>1−α</sub>(X)     CVaR<sub>α</sub> = −E[ X | X ≤ q<sub>1−α</sub>(X) ]     normal: CVaR<sub>α</sub> = −(μ − σ·φ(z)/(1 − α))", "formula"),
+          tabla([["Pieza", "Métrica", "Cómo se calcula", "Para qué sirve"],
+                 ["Copiloto", "VaR y CVaR al 95 % y al 99 %", "Sobre las 10,000 trayectorias de P&L del Monte Carlo de cada candidata", "Tamaño del peor escenario frente a la pérdida máxima"],
+                 ["Copiloto", "CVaR 99 % / pérdida máxima", "Cociente de las dos cifras", "Qué tanto del máximo se pierde en el peor 1 %"],
+                 ["Copiloto", "Prob. de ganancia, valor esperado, P5 y P95", "Monte Carlo con deriva de la opinión y escenario neutral", "Insumos del semáforo y de la mesa"],
+                 ["Copiloto", "Pérdida y ganancia máximas, breakevens", "Payoff exacto al vencimiento", "Límite contra el presupuesto"],
+                 ["Copiloto", "Griegas de posición y de portafolio", "Black-Scholes con la cadena actual; medidores tipo válvula", "Alertas de cobertura de delta y de theta"],
+                 ["Bot", "VaR y CVaR históricos y normales, 95 % y 99 %", "Retornos de 15 min de cada activo y P&L de las operaciones", "Comparar la cola real con la normal (curtosis)"],
+                 ["Bot", "CAViaR (Engle y Manganelli)", "Regresión de cuantiles q<sub>t</sub> = β0 + β1·q<sub>t−1</sub> + β2·|r<sub>t−1</sub>|", "VaR que se adapta a la volatilidad"],
+                 ["Bot", "Kupiec y Christoffersen", "Razón de verosimilitud χ²(1) y χ²(2) sobre las violaciones", "Validar que el VaR falle cerca del 5 % y sin rachas"],
+                 ["Bot", "Sharpe, Sortino, drawdown máximo, win rate", "Curva de capital por estrategia", "Desempeño ajustado por riesgo"],
+                 ["Bot", "Stop y take profit por ATR, trailing, tamaño 2 %, kill-switch 5 %", "Reglas en cada vela cerrada", "Limitar la pérdida por operación y por día"]],
+                [2 * cm, 4.2 * cm, 6.2 * cm, 5 * cm]),
+          P("5.8 Markowitz y correlación de Pearson", "h2"),
           P("Con un año de retornos diarios de los activos del bot se calcula la matriz de Pearson y se simulan 5,000 carteras long-only con pesos de Dirichlet. Para "
             "cada cartera, μ<sub>p</sub> = wᵀμ·252 y σ<sub>p</sub> = √(wᵀΣw·252). Se reportan la de máximo Sharpe y la de mínima volatilidad.")]
 
@@ -453,8 +511,10 @@ def contenido(datos: dict[str, Any]) -> list[Any]:
             f"porque la muestra cubre menos de dos días. Total en el Binance spot testnet: <b>{pnl_testnet:+.2f} USD</b>, ROI de <b>{pnl_testnet / cap_testnet * 100:+.3f} %</b>."),
           tabla(filas, [1.9 * cm, 2.8 * cm, 2.9 * cm, 1.3 * cm, 1.4 * cm, 1.3 * cm, 1.4 * cm, 1.4 * cm, 1.4 * cm, 1.4 * cm]),
           figura("curvas_capital.png", 16.5, "Figura 8. Capital virtual por activo y estrategia a lo largo de las operaciones cerradas."),
-          P(f"Las operaciones de NVDA y SPY en Alpaca Paper se excluyen del desempeño: {cero} se guardaron con cantidad cero por un error de registro, y "
-            f"{vela} salidas ocurrieron en la misma vela de entrada. Ambos problemas se describen y corrigieron en la sección 7.")]
+          P(f"Se excluyen del desempeño {cero} operaciones de Alpaca Paper que se guardaron con cantidad cero por un error de registro, y hubo "
+            f"{vela} salidas en la misma vela de entrada. Ambos problemas se describen y corrigieron en la sección 7. En Alpaca Paper quedan "
+            f"{int(des[des['venue'] == 'alpaca_paper']['operaciones_validas'].sum())} operaciones válidas, con un P&L de "
+            f"{des[des['venue'] == 'alpaca_paper']['pnl_usd'].sum():+.2f} USD.")]
 
     s += [KeepTogether([P("6.7 Copiloto de opciones", "h2"),
           tabla([["Fecha (UTC)", "Activo", "Opinión", "Horizonte", "Presupuesto", "Semáforo", "Estrategia elegida"]] +
@@ -475,8 +535,40 @@ def contenido(datos: dict[str, Any]) -> list[Any]:
     s += [PageBreak(), P("6.8 Correlación de Pearson y frontera de Markowitz", "h2"),
           figura("markowitz_pearson.png", 16.5, "Figura 9. Correlación de Pearson y frontera eficiente con un año de retornos diarios."),
           tabla(filas_corr, [2 * cm] + [2.4 * cm] * len(corr.columns)), Spacer(1, 6), tabla(filas_mk),
-          P("BTC y SOL tienen una correlación muy alta, así que repartir capital del bot entre ambos diversifica poco. La cartera de máximo Sharpe se concentra en SPY "
-            "e INTC, por su menor volatilidad en el último año. Esta frontera es una referencia para repartir el capital del bot entre activos.")]
+          P(_texto_markowitz(corr, mk))]
+
+    filas_rc = [["Opinión", "Estrategia", "Pérdida máx.", "Prob. ganancia", "VaR 95 %", "CVaR 95 %", "VaR 99 %", "CVaR 99 %", "CVaR 99 % / máx."]]
+    for r in rc.itertuples():
+        filas_rc.append([r.opinion, r.estrategia, f(r.perdida_maxima, 1), f"{r.prob_ganancia:.0%}", f(r.var95, 1), f(r.cvar95, 1), f(r.var99, 1), f(r.cvar99, 1), f"{r.cvar99_sobre_perdida_max:.0%}"])
+    s += [PageBreak(), P("6.9 Riesgo del copiloto: VaR y CVaR del Monte Carlo", "h2"),
+          P("Ejemplo en vivo con BTC, 14 días y 500 USD de presupuesto, para dos opiniones. Pérdidas en USD al horizonte."),
+          tabla(filas_rc, [2 * cm, 4.6 * cm, 1.5 * cm, 1.5 * cm, 1.4 * cm, 1.4 * cm, 1.4 * cm, 1.4 * cm, 1.6 * cm]),
+          P("En las estrategias de débito, como el long put o el bear put spread, más del 5 % de las trayectorias pierde toda la prima, así que el VaR y el CVaR "
+            "coinciden con la pérdida máxima. En los iron condor, de crédito, la mayoría de los escenarios gana poco y la cola es más corta: el CVaR al 95 % queda "
+            "muy por debajo de la pérdida máxima. Por eso el copiloto muestra las dos cifras juntas."),
+          figura("riesgo_copiloto.png", 16.5, "Figura 10. Distribución del P&L simulado con VaR y CVaR al 95 %, y probabilidad acumulada del P&L.")]
+    filas_rb = [["Activo", "VaR 95 % hist.", "CVaR 95 % hist.", "VaR 95 % normal", "CVaR 95 % normal", "CVaR 99 % hist.", "Curtosis", "CVaR 95 % por operación (USD)"]]
+    for r in rb.itertuples():
+        filas_rb.append([r.activo, f"{r.var95_hist_pct:.3f} %", f"{r.cvar95_hist_pct:.3f} %", f"{r.var95_normal_pct:.3f} %", f"{r.cvar95_normal_pct:.3f} %",
+                         f"{r.cvar99_hist_pct:.3f} %", f(r.curtosis, 1), f(r.cvar95_operacion_usd, 2)])
+    filas_cav = [["Activo", "β1", "β2", "Violaciones dentro", "Violaciones fuera", "Kupiec p", "Christoffersen p", "VaR histórico fuera", "DM HLN (p)"]]
+    for r in cav.itertuples():
+        filas_cav.append([r.activo, f(r.beta1, 3), f(r.beta2, 3), f"{r.violaciones_dentro_pct:.1f} %", f"{r.violaciones_fuera_pct:.1f} %", f(r.kupiec_p, 3), f(r.christoffersen_p, 3),
+                          f"{r.violaciones_historico_pct:.1f} %", f"{r.dm_hln:.2f} ({r.dm_p:.2f})"])
+    pasa = cav[cav["kupiec_p"] >= 0.05]
+    s += [PageBreak(), P("6.10 Riesgo del bot: VaR, CVaR y CAViaR", "h2"),
+          P("VaR y CVaR de los retornos de 15 minutos de cada activo, en la versión histórica y en la normal con la misma media y desviación, y CVaR del P&L por operación "
+            "cuando hay al menos cinco operaciones cerradas."),
+          tabla(filas_rb, [2 * cm, 1.9 * cm, 2 * cm, 2 * cm, 2.1 * cm, 2 * cm, 1.6 * cm, 3.6 * cm]),
+          P("La curtosis está muy por encima de 0 en todos los activos: las colas son más pesadas que las de una normal. Por eso el CVaR histórico al 95 % es mayor que "
+            "el normal, sobre todo en acciones, donde los saltos de apertura concentran las pérdidas grandes."),
+          figura("var_cvar_bot.png", 16.5, "Figura 11. Retornos de 15 minutos con VaR y CVaR al 95 % y la normal ajustada."),
+          P("CAViaR se estima con el 70 % inicial de las velas y se evalúa en el 30 % final, reestimándolo cada 100 velas solo con datos pasados."),
+          tabla(filas_cav, [1.9 * cm, 1.3 * cm, 1.3 * cm, 2 * cm, 2 * cm, 1.6 * cm, 2.2 * cm, 2.3 * cm, 2.8 * cm]),
+          P(f"CAViaR acierta la cobertura del 5 % en {', '.join(pasa['activo'])}, donde el VaR histórico es demasiado conservador. En las acciones falla por un cambio de "
+            "régimen: la volatilidad se duplicó en el tramo de prueba y ningún modelo entrenado en el periodo tranquilo lo anticipa. Diebold-Mariano, con pérdida de "
+            "cuantil y h = 1, no encuentra diferencia significativa entre los dos VaR en ningún activo."),
+          figura("caviar_btc.png", 16.5, "Figura 12. VaR de CAViaR, VaR histórico móvil y violaciones en BTC/USDT.")]
 
     # 7. Riesgo
     s += [PageBreak(), P("7. Análisis de riesgo", "h1"),
@@ -496,6 +588,10 @@ def contenido(datos: dict[str, Any]) -> list[Any]:
                  "<b>Estrategias que comparten cuenta.</b> Alpaca guarda una sola posición neta por activo, mientras el bot lleva una por estrategia. "
                  "Cuando Alpaca rechazaba una apertura, esta quedaba en paper, pero su cierre se enviaba al broker y dejaba acciones reales sin seguimiento. "
                  "Se corrigió el 19 de noviembre: cada posición se cierra en el mismo venue donde se abrió.",
+                 "<b>Órdenes netas en Alpaca.</b> Alpaca guarda una posición neta por acción y el bot una por estrategia. Desde el 19 de noviembre, cada operación "
+                 "lleva la cuenta a la suma de las posiciones de todas las estrategias y solo envía la diferencia; cruzar de largo a corto se parte en dos órdenes.",
+                 "<b>Mercado cerrado y subyacentes sin opciones.</b> Con la bolsa cerrada el bot ya no abre acciones en paper. En el copiloto, BTC y ETH usan contratos que "
+                 "existen en Deribit, y lo que Deribit no cubre va al testnet de Gate.io; como ese libro no tiene contraparte, la orden se cancela a los 10 minutos y pasa a paper.",
                  "<b>Bloqueo geográfico.</b> Binance responde con error 451 a IPs de Estados Unidos, por eso la VM está en Querétaro y no en us-central1.",
                  "<b>Testnets inestables.</b> El testnet de Binance se reinicia periódicamente. La base de datos es la fuente de verdad y el bot reconcilia al arrancar. "
                  "Si un venue rechaza una orden, se usa paper interno y se avisa en #sistema.",
@@ -553,8 +649,8 @@ def contenido(datos: dict[str, Any]) -> list[Any]:
           tabla([["Carpeta", "Contenido"],
                  ["app/", "Streamlit: login con Firebase, navegación y las cinco pestañas"],
                  ["core/", "Configuración, base de datos, bus de eventos, búsqueda de activos, posiciones y ejecución"],
-                 ["data_sources/", "Binance Options, Alpaca, Deribit, yfinance, velas y noticias"],
-                 ["quant/", "Black-Scholes, volatilidad, estrategias multipata, selector, Monte Carlo, semáforo y portafolio"],
+                 ["data_sources/", "Binance Options, Alpaca, Deribit, Gate.io testnet, yfinance, velas y noticias"],
+                 ["quant/", "Black-Scholes, volatilidad, estrategias multipata, selector, Monte Carlo, semáforo, portafolio, VaR y CVaR, y CAViaR"],
                  ["agents/", "Clientes de Together, Gemini y Grok, roles y orquestación de la mesa"],
                  ["bot/", "Runner 24/7, ejecución por venue, riesgo, variables, entrenamiento y estrategias"],
                  ["validation/", "Métricas, Diebold-Mariano, simulación de hiperparámetros y Black-Scholes vs Binance"],
@@ -562,7 +658,7 @@ def contenido(datos: dict[str, Any]) -> list[Any]:
                  ["scripts/", "check_apis.py, exportar_resultados.py, crear_notebook.py y generar_informe.py"],
                  ["docs/", "Este informe, la presentación y las tablas y gráficas en docs/resultados/"],
                  ["deploy/", "Servicios systemd y setup_vm.sh"],
-                 ["tests/", "39 pruebas de Black-Scholes, Diebold-Mariano, semáforo, estrategias, ejecución, trailing stop y venue de cierre"]],
+                 ["tests/", "72 pruebas: Black-Scholes, Diebold-Mariano, semáforo, estrategias, ejecución, trailing stop, VaR, CVaR, CAViaR, Gate.io y órdenes netas en Alpaca"]],
                 [3.2 * cm, 14.2 * cm]),
           Spacer(1, 8),
           P("Para reproducir los resultados:"),

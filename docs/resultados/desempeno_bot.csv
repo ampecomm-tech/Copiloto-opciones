@@ -1,16 +1,23 @@
 activo,estrategia,venue,operaciones,operaciones_validas,cantidad_cero,salida_en_vela_de_entrada,pnl_usd,roi_pct,sharpe_por_operacion,sortino_por_operacion,max_drawdown_pct,win_rate_pct
-BTC/USDT,Cruce MACD,binance_spot_testnet,4,4,0,0,3.492,0.349,0.091,0.303,-1.178,25.0
-BTC/USDT,EMA50 + Chandelier,binance_spot_testnet,5,5,0,1,-22.073,-2.207,-1.325,-1.325,-2.207,0.0
-BTC/USDT,Random Forest,binance_spot_testnet,15,15,0,0,-4.155,-0.416,-0.044,-0.063,-2.403,40.0
+BTC/USDT,Cruce MACD,binance_spot_testnet,6,6,0,0,7.433,0.743,0.142,0.506,-1.178,33.333
+BTC/USDT,EMA50 + Chandelier,binance_spot_testnet,6,6,0,1,-10.858,-1.086,-0.251,-0.535,-2.207,16.667
+BTC/USDT,Random Forest,binance_spot_testnet,21,21,0,0,3.401,0.34,0.031,0.042,-2.403,52.381
 BTC/USDT,Reversión RSI,binance_spot_testnet,1,1,0,0,-6.954,-0.695,0.0,0.0,-0.695,0.0
-BTC/USDT,Votación,binance_spot_testnet,2,2,0,0,7.358,0.736,0.606,0.0,-0.061,50.0
-NVDA,Cruce MACD,alpaca_paper,1,0,1,0,0.0,0.0,0.0,0.0,0.0,
-NVDA,EMA50 + Chandelier,alpaca_paper,3,0,3,1,0.0,0.0,0.0,0.0,0.0,
-NVDA,Random Forest,alpaca_paper,2,0,2,1,0.0,0.0,0.0,0.0,0.0,
-NVDA,Votación,alpaca_paper,2,0,2,1,0.0,0.0,0.0,0.0,0.0,
-SOL/USDT,Cruce MACD,binance_spot_testnet,3,3,0,1,22.863,2.286,0.326,1.05,-1.126,33.333
-SOL/USDT,EMA50 + Chandelier,binance_spot_testnet,8,8,0,1,8.224,0.822,0.085,0.522,-2.112,37.5
-SOL/USDT,Random Forest,binance_spot_testnet,4,4,0,0,2.007,0.201,0.083,0.0,-0.854,75.0
+BTC/USDT,Votación,binance_spot_testnet,3,3,0,0,18.572,1.857,1.015,0.0,-0.061,66.667
+INTC,Cruce MACD,alpaca_paper,2,2,0,0,6.644,0.664,0.1,0.0,-2.217,50.0
+INTC,EMA50 + Chandelier,alpaca_paper,4,4,0,0,-36.832,-3.683,-3.259,-3.259,-3.683,0.0
+INTC,Random Forest,alpaca_paper,4,4,0,0,-1.0,-0.1,-0.004,-0.01,-2.959,25.0
+INTC,Reversión RSI,alpaca_paper,1,1,0,0,25.76,2.576,0.0,0.0,0.0,100.0
+INTC,Votación,alpaca_paper,2,2,0,0,54.641,5.464,0.403,0.0,-2.125,50.0
+NVDA,Cruce MACD,alpaca_paper,3,1,2,0,-14.203,-1.42,0.0,0.0,-1.42,0.0
+NVDA,EMA50 + Chandelier,alpaca_paper,5,1,4,1,-15.148,-1.515,0.0,0.0,-1.515,0.0
+NVDA,Random Forest,alpaca_paper,3,0,3,1,0.0,0.0,0.0,0.0,0.0,
+NVDA,Votación,alpaca_paper,4,1,3,1,-14.203,-1.42,0.0,0.0,-1.42,0.0
+SOL/USDT,Cruce MACD,binance_spot_testnet,7,7,0,1,29.714,2.971,0.273,0.708,-1.126,57.143
+SOL/USDT,EMA50 + Chandelier,binance_spot_testnet,11,11,0,1,10.993,1.099,0.088,0.498,-2.112,36.364
+SOL/USDT,Random Forest,binance_spot_testnet,7,7,0,0,6.24,0.624,0.122,9.421,-1.131,71.429
 SOL/USDT,Votación,binance_spot_testnet,1,1,0,0,-8.542,-0.854,0.0,0.0,-0.854,0.0
-SPY,Cruce MACD,alpaca_paper,1,0,1,0,0.0,0.0,0.0,0.0,0.0,
-SPY,EMA50 + Chandelier,alpaca_paper,2,2,0,1,-9.085,-0.909,-11.859,-11.859,-0.909,0.0
+SPY,Cruce MACD,alpaca_paper,2,1,1,0,2.26,0.226,0.0,0.0,0.0,100.0
+SPY,EMA50 + Chandelier,alpaca_paper,6,5,1,1,-8.663,-0.866,-0.395,-3.804,-1.422,40.0
+SPY,Random Forest,alpaca_paper,1,1,0,0,-5.68,-0.568,0.0,0.0,-0.568,0.0
+SPY,Votación,alpaca_paper,1,1,0,0,-5.83,-0.583,0.0,0.0,-0.583,0.0
