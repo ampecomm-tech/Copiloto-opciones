@@ -15,7 +15,7 @@ from quant.strategies_options import griegas_posicion, pnl_actual
 
 DIRECCIONES = ["alcista", "bajista", "neutral", "volatil"]
 NOMBRE_DIRECCION = {"alcista": "Alcista", "bajista": "Bajista", "neutral": "Neutral", "volatil": "Volátil"}
-NOMBRE_VENUE = {"deribit_testnet": "Deribit testnet", "binance_options_testnet": "Binance Options testnet",
+NOMBRE_VENUE = {"deribit_testnet": "Deribit testnet", "gate_options_testnet": "Gate.io testnet", "binance_options_testnet": "Binance Options testnet",
                 "alpaca_paper": "Alpaca Paper", "paper": "Paper interno"}
 NOMBRE_FUENTE = {"binance_options": "Binance Options", "alpaca": "Alpaca", "yfinance": "yfinance"}
 ROLES = {

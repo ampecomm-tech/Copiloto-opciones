@@ -33,7 +33,7 @@ Todo el razonamiento interno (agentes y bot) se publica en **Discord** (canales 
 | IA de apoyo | Gemini (API de AI Studio, SDK `google-genai`, **no** Vertex AI): noticias, opinión estructurada, eventos con grounding, explicaciones, resumen diario, respaldo de la mesa |
 | Opciones cripto | Binance European Options API (`https://eapi.binance.com`): BTC, ETH, BNB, SOL, XRP, DOGE (liquidación en USDT, estilo europeo) |
 | Opciones acciones | API de datos de opciones de Alpaca; respaldo: yfinance (`Ticker.options`, `Ticker.option_chain`) |
-| Ejecución copiloto | Cripto: **testnet de Deribit** (`https://test.deribit.com`, BTC y ETH; por defecto) o testnet de opciones de Binance (`config.ejecucion.venue_cripto`); acciones/ETFs: Alpaca Paper (`https://paper-api.alpaca.markets`); respaldo: paper interno |
+| Ejecución copiloto | Cripto: **testnet de Deribit** (`https://test.deribit.com`, BTC y ETH; por defecto) o testnet de opciones de Binance (`config.ejecucion.venue_cripto`); si Deribit no puede, respaldo en el **testnet de opciones de Gate.io** (`https://api-testnet.gateapi.io`, BTC, ETH, SOL, DOGE, XRP, BNB…); acciones/ETFs: Alpaca Paper (`https://paper-api.alpaca.markets`); respaldo: paper interno |
 | Bot (cripto) | ccxt sobre Binance spot testnet (`testnet.binance.vision`) para la ejecución; señales con datos públicos del Binance real (mainnet, sin llave) |
 | Bot (acciones/ETFs de EE. UU.) | Alpaca Paper |
 | Bot (todo lo demás) | Paper trading interno con precios de yfinance (materias primas, cripto no listada, etc.) |
@@ -125,6 +125,8 @@ BINANCE_FUTURES_TESTNET_API_KEY=
 BINANCE_FUTURES_TESTNET_SECRET=
 DERIBIT_TESTNET_CLIENT_ID=
 DERIBIT_TESTNET_CLIENT_SECRET=
+GATE_API_KEY=                     # testnet de Gate.io (respaldo de opciones cripto)
+GATE_API_SECRET=
 ALPACA_API_KEY=
 ALPACA_SECRET_KEY=
 ALPACA_BASE_URL=https://paper-api.alpaca.markets
@@ -168,7 +170,7 @@ def emit(channel: str, event_type: str, title: str, payload: dict, user_id: str 
 
 - `events(id, ts, channel, event_type, title, payload_json, user_id)`
 - `recommendations(id, ts, user_id, asset, view_json, candidates_json, agents_json, verdict, chosen_strategy_json)`
-- `option_positions(id, user_id, recommendation_id, asset, legs_json, entry_ts, entry_cost, status, exit_ts, exit_value, pnl, venue, venue_order_ids_json)` — venue: `deribit_testnet` | `binance_options_testnet` | `alpaca_paper` | `paper`
+- `option_positions(id, user_id, recommendation_id, asset, legs_json, entry_ts, entry_cost, status, exit_ts, exit_value, pnl, venue, venue_order_ids_json)` — venue: `deribit_testnet` | `gate_options_testnet` | `binance_options_testnet` | `alpaca_paper` | `paper`
 - `sentiment_cache(asset, ts, score, summary, posts_json, provider)` — TTL 15 min
 - `bot_assets(id, symbol, display_name, market_type, venue, active, added_ts)` — venue: `binance_spot_testnet` | `alpaca_paper` | `paper`
 - `bot_strategy_state(asset_id, strategy, active, capital, position_json)`
@@ -372,7 +374,7 @@ Feed en vivo de `events` con filtros por canal; vista tipo chat con colores por 
 - **Together AI**: solo 22 de 178 modelos están disponibles en serverless para esta cuenta (los Llama clásicos, Qwen y Mistral piden endpoint dedicado). Los asignados en `config.yaml` (`openai/gpt-oss-120b`, `deepseek-ai/DeepSeek-V4.1-Flash`, `meta-models/Muse-Glimmer-30B`) son modelos de razonamiento: necesitan `max_tokens` ≥ 4000 o devuelven contenido vacío. Para cambiar modelos, sondear primero con una llamada mínima; la API no marca cuáles son serverless.
 - **Gemini**: funciona en modo normal y JSON; la búsqueda de Google (grounding) devuelve 429 por cuota del plan. El sentimiento usa los titulares descargados y lo muestra como "Gemini + titulares (sin Google Search)". Si se activa facturación en AI Studio, el grounding se reactiva solo (se reintenta cada hora).
 - **xAI Grok**: desde el 19 nov 2026 hay `XAI_API_KEY` en la Mac y en la VM, así que el sentimiento usa "X vía Grok" (`x_search`, unos 20 s por activo, caché de 15 min) y Gemini queda de respaldo. El modelo configurado, `grok-4-fast`, responde aunque no aparece en `/v1/models`; si deja de funcionar, usar uno de esa lista. Together AI no ofrece modelos de xAI.
-- **Testnet de opciones de Binance**: `demo-fapi.binance.com` responde 403 en `/eapi`; por eso la ejecución cripto va a Deribit testnet (`config.ejecucion.venue_cripto`). Deribit testnet solo tiene BTC y ETH; otros subyacentes caen a paper con aviso en `#sistema`.
+- **Testnet de opciones de Binance**: `demo-fapi.binance.com` responde 403 en `/eapi`; por eso la ejecución cripto va a Deribit testnet (`config.ejecucion.venue_cripto`). Deribit testnet solo tiene BTC y ETH. Desde el 19 nov 2026, lo que Deribit no puede (otros subyacentes o strikes que no existen allí) va al **testnet de opciones de Gate.io** (`data_sources/gate_options.py`, llaves `GATE_API_KEY`/`GATE_API_SECRET` del testnet, solo host de testnet). Ese libro no tiene contraparte: las órdenes quedan "en libro" y `core/positions.py` las cancela tras `ejecucion.gate_minutos_espera` y pasa la posición a paper con aviso en `#sistema`. Para operar opciones en Gate.io hay que tener saldo en su cuenta de opciones: se pasa de futuros a spot y de spot a opciones (no hay transferencia directa).
 - La API key de Deribit tiene scope `trade:read_write`; desde la Mac no lee saldo (falta `account:read`), desde la VM sí.
 - **Diseño (16 nov)**: tema oscuro con un solo acento azul en `.streamlit/config.toml`; los mismos colores están en `app/ui.py` (`TOKENS`), junto con el CSS global, los componentes (pastillas, franja de datos, filas del feed, tabla de patas) y `estilo_figura()` para Plotly. Sin emojis: íconos `:material/...:`. Los cambios en `app/pages/*.py` y en `config.toml` no se recargan en caliente (las páginas se importan con `importlib`): reiniciar Streamlit.
 - **Rutas de Streamlit**: los `url_path` de `st.navigation` en `app/main.py` no deben coincidir con los nombres de archivo de `app/pages/` (p. ej. `copiloto`), porque una URL directa ejecutaría la página automática sin el resto de la app.

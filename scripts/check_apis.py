@@ -131,6 +131,13 @@ def binance_futuros_demo() -> str:
     raise RuntimeError("; ".join(errores))
 
 
+def gate_testnet() -> str:
+    from data_sources import gate_options as g
+
+    c = g.cuenta()
+    return f"autenticado en el testnet · cuenta de opciones {float(c.get('total', 0)):,.2f} {c.get('currency', 'USDT')} · {len(g.contratos('BTC'))} contratos de BTC"
+
+
 def deribit_testnet() -> str:
     from data_sources import deribit as d
 
@@ -182,6 +189,7 @@ def main() -> int:
     prueba("Binance Spot Testnet", binance_spot, ("BINANCE_SPOT_TESTNET_API_KEY", "BINANCE_SPOT_TESTNET_SECRET"))
     prueba("Binance Futures/Demo", binance_futuros_demo, ("BINANCE_FUTURES_TESTNET_API_KEY", "BINANCE_FUTURES_TESTNET_SECRET"))
     prueba("Deribit Testnet", deribit_testnet, ("DERIBIT_TESTNET_CLIENT_ID", "DERIBIT_TESTNET_CLIENT_SECRET"))
+    prueba("Gate.io Options Testnet", gate_testnet, ("GATE_API_KEY", "GATE_API_SECRET"))
     prueba("Binance Options (público)", binance_opciones_publico)
     prueba("yfinance", yfinance_aapl)
     for canal in ("MESA", "SENTIMIENTO", "BOT_SENALES", "BOT_OPERACIONES", "ALERTAS", "SISTEMA"):

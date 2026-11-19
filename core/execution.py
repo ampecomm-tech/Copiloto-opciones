@@ -4,6 +4,9 @@
   deribit_testnet`, por defecto) o en el testnet de opciones de Binance (`binance_options_testnet`,
   REST base configurable, firmado con la llave del testnet de futuros).
 - Acciones/ETFs: órdenes en **Alpaca Paper**, multipata (`mleg`) para spreads y condors.
+- Respaldo cripto: si Deribit no puede (subyacente sin opciones, strike inexistente, API caída), la estrategia
+  se envía al **testnet de opciones de Gate.io** (`config.ejecucion.gate_respaldo`). Como ese libro no tiene
+  contraparte, la orden queda "en libro" y `core/positions.py` la cancela si nadie la llena a tiempo.
 - Si el venue rechaza una pata o la API falla, se usa **paper interno** y se emite un
   evento a `sistema` explicando por qué. La DB es la fuente de verdad.
 
@@ -21,9 +24,25 @@ import requests
 
 from core.config import cfg, env
 from core.events import emit, log_app
-from data_sources import alpaca, deribit
+from data_sources import alpaca, deribit, gate_options
 
-VENUES = ("deribit_testnet", "binance_options_testnet", "alpaca_paper", "paper")
+VENUES = ("deribit_testnet", "gate_options_testnet", "binance_options_testnet", "alpaca_paper", "paper")
+
+
+def gate_respaldo_activo() -> bool:
+    """True si el respaldo de Gate.io está habilitado en config y hay llaves del testnet."""
+    return str(cfg("ejecucion", "gate_respaldo", default=True)).lower() == "true" and gate_options.disponible()
+
+
+def ordenar_gate(estrategia: dict[str, Any]) -> dict[str, Any]:
+    """Envía la estrategia al testnet de opciones de Gate.io; queda en libro hasta que alguien la llene."""
+    from datetime import datetime, timezone
+
+    activo = str(estrategia.get("activo", "BTC")).upper()
+    r = gate_options.ordenar_estrategia(activo, estrategia["legs"])
+    return {"venue": "gate_options_testnet", "order_ids": r["order_ids"], "estado": "en_libro", "contratos": r["contratos"],
+            "enviada_ts": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "detalle": r["detalle"] + f" · en libro: se cancela si nadie la llena en {int(cfg('ejecucion', 'gate_minutos_espera', default=10))} min"}
 
 
 def venue_cripto() -> str:
@@ -164,6 +183,14 @@ def ejecutar(estrategia: dict[str, Any], venue_objetivo: str, user_id: str | Non
         raise RuntimeError(f"venue desconocido {venue_objetivo}")
     except Exception as e:
         motivo = str(e)[:300]
+        if venue_objetivo in ("deribit_testnet", "binance_options_testnet") and gate_respaldo_activo():
+            try:
+                res = ordenar_gate(estrategia)
+                emit("sistema", "info", f"Orden de {estrategia['nombre']} enviada al respaldo Gate.io testnet",
+                     {"venue_intentado": venue_objetivo, "motivo": motivo, "activo": estrategia.get("activo", ""), "ordenes": res["order_ids"]}, user_id)
+                return res
+            except Exception as e_gate:
+                motivo = f"{motivo} · respaldo Gate.io: {str(e_gate)[:200]}"
         log_app.warning("Ejecución en %s falló, respaldo paper: %s", venue_objetivo, motivo)
         emit("sistema", "warning", f"Orden de {estrategia['nombre']} cayó a paper interno",
              {"venue_intentado": venue_objetivo, "motivo": motivo, "activo": estrategia.get("activo", "")}, user_id)

@@ -31,7 +31,9 @@ def abrir_posicion(user_id: str | None, recommendation_id: int | None, activo: s
         (user_id, recommendation_id, normalizar_activo(activo), db.a_json({"legs": legs, "multiplicador": estrategia["multiplicador"], "nombre": estrategia["nombre"], "tipo": estrategia["tipo"],
                                                                         "max_ganancia": estrategia["max_ganancia"], "max_perdida": estrategia["max_perdida"], "ganancia_ilimitada": estrategia.get("ganancia_ilimitada", False),
                                                                         "breakevens": estrategia["breakevens"], "spot_entrada": estrategia["spot"], "expiry": estrategia["expiry"]}),
-         ahora, float(estrategia["costo_neto"]), float(estrategia["costo_neto"]), db.a_json(estrategia.get("griegas", {})), ahora, ej["venue"], db.a_json({"order_ids": ej.get("order_ids", []), "estado": ej.get("estado"), "detalle": ej.get("detalle")})),
+         ahora, float(estrategia["costo_neto"]), float(estrategia["costo_neto"]), db.a_json(estrategia.get("griegas", {})), ahora, ej["venue"],
+         db.a_json({"order_ids": ej.get("order_ids", []), "estado": ej.get("estado"), "detalle": ej.get("detalle"),
+                    **{k: ej[k] for k in ("enviada_ts", "contratos") if k in ej}})),
     )
     emit("alertas", "ok", f"Posición abierta: {estrategia['nombre']} en {activo} [{ej['venue']}]",
          {"costo_neto": round(estrategia["costo_neto"], 2), "max_perdida": round(estrategia["max_perdida"], 2), "vencimiento": estrategia["expiry"], "venue": ej["venue"], "ordenes": ej.get("order_ids", []), "detalle": ej.get("detalle")}, user_id)
@@ -99,8 +101,63 @@ def cerrar_posicion(pos_id: int, valor_salida: float, user_id: str | None = None
     emit("alertas", "ok" if pnl >= 0 else "rojo", f"Posición #{pos_id} cerrada ({razon}): P&L {pnl:+,.2f} USD", {"asset": pos["asset"], "valor_salida": round(valor_salida, 2)}, user_id)
 
 
+def revisar_ordenes_gate(ahora: datetime | None = None) -> list[int]:
+    """Revisa las posiciones enviadas al respaldo Gate.io testnet que siguen en libro.
+
+    Si todas sus órdenes se llenaron, la posición queda ejecutada en Gate.io. Si pasó `ejecucion.gate_minutos_espera`
+    y alguna sigue abierta, cancela las abiertas y la posición pasa a paper interno, con un aviso en `sistema`.
+
+    Returns:
+        Ids de las posiciones que cambiaron de estado.
+    """
+    from data_sources import gate_options
+
+    ahora = ahora or datetime.now(timezone.utc)
+    espera = float(cfg("ejecucion", "gate_minutos_espera", default=10))
+    cambiadas = []
+    for pos in db.consultar("SELECT id, user_id, asset, venue_order_ids_json FROM option_positions WHERE status='abierta' AND venue='gate_options_testnet'"):
+        ej = db.de_json(pos["venue_order_ids_json"], {})
+        if ej.get("estado") != "en_libro" or not ej.get("order_ids"):
+            continue
+        estado = gate_options.estado_ordenes(ej["order_ids"])
+        if estado["todas_llenas"]:
+            ej.update({"estado": "ejecutada", "detalle": f"Ejecutada en Gate.io testnet ({', '.join(ej.get('contratos', []))})"})
+            db.ejecutar("UPDATE option_positions SET venue_order_ids_json=? WHERE id=?", (db.a_json(ej), pos["id"]))
+            emit("alertas", "ok", f"Posición #{pos['id']} {pos['asset']}: órdenes llenadas en Gate.io testnet", {"ordenes": ej["order_ids"]}, pos.get("user_id"))
+            cambiadas.append(pos["id"])
+            continue
+        try:
+            enviada = datetime.fromisoformat(str(ej.get("enviada_ts")))
+        except ValueError:
+            enviada = ahora
+        minutos = (ahora - enviada).total_seconds() / 60
+        if minutos < espera:
+            continue
+        canceladas = []
+        for oid in estado["abiertas"]:
+            try:
+                gate_options.cancelar(oid)
+                canceladas.append(oid)
+            except Exception as e:
+                log_app.warning("No se pudo cancelar la orden %s de Gate.io: %s", oid, e)
+        motivo = (f"nadie llenó las órdenes en Gate.io testnet en {minutos:.0f} min (el libro de opciones del testnet no tiene contraparte); "
+                  f"se cancelaron {len(canceladas)} órdenes")
+        if estado["llenas"]:
+            motivo += f"; {len(estado['llenas'])} patas sí se llenaron y quedan en Gate.io"
+        ej.update({"estado": "cancelada_sin_contraparte", "venue_original": "gate_options_testnet", "canceladas": canceladas,
+                   "detalle": f"Paper interno (respaldo): {motivo}"})
+        db.ejecutar("UPDATE option_positions SET venue='paper', venue_order_ids_json=? WHERE id=?", (db.a_json(ej), pos["id"]))
+        emit("sistema", "warning", f"Posición #{pos['id']} {pos['asset']} pasó a paper interno", {"venue_intentado": "gate_options_testnet", "motivo": motivo}, pos.get("user_id"))
+        cambiadas.append(pos["id"])
+    return cambiadas
+
+
 def refrescar_todas() -> list[dict[str, Any]]:
-    """Revalúa todas las posiciones abiertas, guarda P&L/griegas y emite alertas de cobertura."""
+    """Revisa las órdenes en libro de Gate.io, revalúa las posiciones abiertas, guarda P&L/griegas y emite alertas."""
+    try:
+        revisar_ordenes_gate()
+    except Exception as e:
+        log_app.warning("Revisión de órdenes de Gate.io falló: %s", e)
     r = float(cfg("app", "tasa_libre_riesgo", default=0.045))
     c = cfg("posiciones") or {}
     abiertas = listar(status="abierta")

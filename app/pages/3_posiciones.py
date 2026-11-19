@@ -10,7 +10,7 @@ from core.config import cfg
 from core.events import leer_eventos
 from quant.portfolio import griegas_portafolio
 
-NOMBRE_VENUE = {"deribit_testnet": "Deribit testnet", "binance_options_testnet": "Binance Options testnet",
+NOMBRE_VENUE = {"deribit_testnet": "Deribit testnet", "gate_options_testnet": "Gate.io testnet", "binance_options_testnet": "Binance Options testnet",
                 "alpaca_paper": "Alpaca Paper", "paper": "Paper interno"}
 
 

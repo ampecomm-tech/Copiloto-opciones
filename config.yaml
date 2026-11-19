@@ -27,6 +27,8 @@ ejecucion:                     # qué pasa al Confirmar en el copiloto
   venue_cripto: "deribit_testnet"   # deribit_testnet (BTC/ETH, test.deribit.com) | binance_options_testnet
   binance_options_testnet_url: "https://demo-fapi.binance.com"
   mercado_cerrado: "cola"      # Alpaca fuera de horario: "cola" (envía y espera la apertura) | "cancelar" (paper interno)
+  gate_respaldo: true          # si Deribit no puede, enviar al testnet de opciones de Gate.io (BTC, ETH, SOL, DOGE, XRP, BNB…)
+  gate_minutos_espera: 10      # el libro del testnet de Gate.io no tiene contraparte: si nadie llena en este tiempo, se cancela y pasa a paper
 
 sentimiento:
   modelo_grok: "grok-4-fast"
