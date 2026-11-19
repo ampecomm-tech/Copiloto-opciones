@@ -92,18 +92,33 @@ def _cerrar(asset: dict[str, Any], estado: dict[str, Any], pos: dict[str, Any], 
     _explicar_async(titulo, {**datos, "estrategia": estado["strategy"], "razon_cierre": razon})
 
 
-def _abrir(asset: dict[str, Any], estado: dict[str, Any], lado: str, precio: float, atr_valor: float, detalles: dict[str, Any]) -> None:
-    """Abre una posición con tamaño por volatilidad y SL/TP por ATR."""
+def _actualizar_stop(asset: dict[str, Any], estado: dict[str, Any], pos: dict[str, Any], alto: float, bajo: float, atr_valor: float, ts_vela: str) -> dict[str, Any]:
+    """Aplica el trailing con la vela cerrada, marca la vela como revisada y guarda la posición."""
+    nueva = risk.actualizar_trailing(pos, alto, bajo, atr_valor)
+    nueva["vela_revisada"] = ts_vela
+    db.ejecutar("UPDATE bot_strategy_state SET position_json=? WHERE asset_id=? AND strategy=?", (db.a_json(nueva), asset["id"], estado["strategy"]))
+    if nueva["sl"] != pos["sl"]:
+        db.ejecutar("UPDATE bot_trades SET sl=? WHERE id=?", (nueva["sl"], pos["trade_id"]))
+        log_bot.info("Trailing %s [%s]: stop %.4f -> %.4f", asset["symbol"], estado["strategy"], pos["sl"], nueva["sl"])
+    if nueva.get("trailing_activo") and not pos.get("trailing_activo"):
+        emit("bot_operaciones", "info", f"Trailing activado en {asset['symbol']} [{estado['strategy']}]: stop en {nueva['sl']:,.4f}",
+             {"lado": pos["side"], "precio_entrada": pos["entry_price"], "stop_anterior": round(pos["sl"], 4), "stop_nuevo": round(nueva["sl"], 4), "mejor_precio": round(nueva["extremo"], 4)})
+    return nueva
+
+
+def _abrir(asset: dict[str, Any], estado: dict[str, Any], lado: str, precio: float, atr_valor: float, detalles: dict[str, Any], ts_vela: str) -> None:
+    """Abre una posición con tamaño por volatilidad y SL/TP por ATR; la vela de entrada queda marcada como revisada."""
     paso = 0.001 if asset["market_type"] == "cripto" else 1.0 if asset["venue"] == "paper" and asset["market_type"] != "cripto" else 1e-4
     qty = risk.tamano_posicion(estado["capital"], precio, atr_valor, paso=paso)
     if qty <= 0:
         return
-    orden = ejecutar_orden(asset["symbol"], asset["venue"], "buy" if lado == "long" else "sell", qty, precio)
+    orden = ejecutar_orden(asset["symbol"], asset["venue"], "buy" if lado == "long" else "sell", qty, precio, abre_corto=lado == "short")
     px = orden["precio"]
     sl, tp = risk.niveles_sl_tp(px, atr_valor, lado)
     trade_id = db.ejecutar("INSERT INTO bot_trades(asset_id, strategy, side, qty, entry_price, sl, tp, entry_ts, venue_order_id) VALUES (?,?,?,?,?,?,?,?,?)",
                            (asset["id"], estado["strategy"], lado, orden["qty"], px, sl, tp, db.ahora_iso(), orden["venue_order_id"]))
-    pos = {"side": lado, "qty": orden["qty"], "entry_price": px, "sl": sl, "tp": tp, "trade_id": trade_id, "entry_ts": db.ahora_iso()}
+    pos = {"side": lado, "qty": orden["qty"], "entry_price": px, "sl": sl, "tp": tp, "trade_id": trade_id, "entry_ts": db.ahora_iso(),
+           "extremo": px, "trailing_activo": False, "vela_revisada": ts_vela}
     db.ejecutar("UPDATE bot_strategy_state SET position_json=? WHERE asset_id=? AND strategy=?", (db.a_json(pos), asset["id"], estado["strategy"]))
     datos = {"qty": orden["qty"], "sl": round(sl, 4), "tp": round(tp, 4), "atr": round(atr_valor, 4), "modo": orden["modo"], "razon": detalles.get("razon", "")}
     titulo = f"Apertura {lado} {asset['symbol']} [{estado['strategy']}] @ {px:,.4f}"
@@ -132,14 +147,17 @@ def procesar_activo(asset: dict[str, Any]) -> None:
             estado["daily_pnl"] = 0.0
         pos = db.de_json(estado.get("position_json"))
 
-        # 1) Gestión de la posición abierta (SL/TP) con la última vela cerrada
-        if pos:
+        # 1) Gestión de la posición abierta: cada vela cerrada se revisa una sola vez y nunca la vela de entrada.
+        #    Primero se evalúa el stop vigente y después se mueve, porque dentro de la vela no se sabe qué ocurrió antes.
+        if pos and pos.get("vela_revisada") != ts_vela:
             salida = risk.evaluar_salida(pos, float(ultima["high"]), float(ultima["low"]), precio)
             if salida:
-                px = pos["sl"] if salida == "SL" else pos["tp"]
+                px = pos["tp"] if salida == "TP" else pos["sl"]
                 _cerrar(asset, estado, pos, px, salida)
                 pos = None
                 estado = db.consultar_uno("SELECT * FROM bot_strategy_state WHERE asset_id=? AND strategy=?", (asset["id"], estado["strategy"])) or estado
+            else:
+                pos = _actualizar_stop(asset, estado, pos, float(ultima["high"]), float(ultima["low"]), atr_valor, ts_vela)
 
         # 2) Señal solo una vez por vela cerrada
         if estado.get("last_candle_ts") == ts_vela:
@@ -165,11 +183,11 @@ def procesar_activo(asset: dict[str, Any]) -> None:
 
         # 4) Entradas y salidas por señal (solo largos en spot; cortos solo en paper)
         if s.action == "BUY" and not pos:
-            _abrir(asset, estado, "long", precio, atr_valor, s.details)
+            _abrir(asset, estado, "long", precio, atr_valor, s.details, ts_vela)
         elif s.action == "SELL" and pos and pos["side"] == "long":
             _cerrar(asset, estado, pos, precio, "señal")
         elif s.action == "SELL" and not pos and asset["venue"] in ("paper", "alpaca_paper"):
-            _abrir(asset, estado, "short", precio, atr_valor, s.details)
+            _abrir(asset, estado, "short", precio, atr_valor, s.details, ts_vela)
         elif s.action == "BUY" and pos and pos["side"] == "short":
             _cerrar(asset, estado, pos, precio, "señal")
 

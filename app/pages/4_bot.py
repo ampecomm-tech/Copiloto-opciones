@@ -110,7 +110,10 @@ def _texto_posicion(pos: dict | None) -> str:
     """Resumen de la posición abierta de una estrategia."""
     if not pos:
         return "—"
-    return f"{pos['side']} {pos['qty']:g} @ {pos['entry_price']:,.2f} · SL {pos['sl']:,.2f} · TP {pos['tp']:,.2f}"
+    base = f"{pos['side']} {pos['qty']:g} @ {pos['entry_price']:,.2f}"
+    if pos.get("trailing_activo"):
+        return f"{base} · SL móvil {pos['sl']:,.2f}"
+    return f"{base} · SL {pos['sl']:,.2f} · TP {pos['tp']:,.2f}"
 
 
 def _activo(a: dict, cap0: float) -> None:

@@ -15,6 +15,9 @@ class ParametrosRiesgo:
     tp_atr_mult: float = 3.0
     riesgo_por_operacion_pct: float = 0.02
     perdida_diaria_max_pct: float = 0.05
+    trailing_habilitado: bool = True
+    trailing_activacion_atr: float = 1.0
+    trailing_distancia_atr: float = 2.0
 
     @classmethod
     def desde_config(cls) -> "ParametrosRiesgo":
@@ -59,19 +62,55 @@ def kill_switch_activo(capital_inicial_dia: float, pnl_dia: float, p: Parametros
 
 
 def evaluar_salida(posicion: dict, precio_alto: float, precio_bajo: float, precio_cierre: float) -> str | None:
-    """Comprueba si una vela tocó el SL o el TP de la posición.
+    """Comprueba si una vela tocó el stop o el TP de la posición.
+
+    Con el trailing armado el TP fijo deja de aplicar, para no cortar la tendencia.
 
     Returns:
-        "SL", "TP" o None.
+        "SL", "TRAILING", "TP" o None.
     """
+    trailing = bool(posicion.get("trailing_activo"))
+    razon_stop = "TRAILING" if trailing else "SL"
     if posicion["side"] == "long":
         if precio_bajo <= posicion["sl"]:
-            return "SL"
-        if precio_alto >= posicion["tp"]:
+            return razon_stop
+        if not trailing and precio_alto >= posicion["tp"]:
             return "TP"
     else:
         if precio_alto >= posicion["sl"]:
-            return "SL"
-        if precio_bajo <= posicion["tp"]:
+            return razon_stop
+        if not trailing and precio_bajo <= posicion["tp"]:
             return "TP"
     return None
+
+
+def actualizar_trailing(posicion: dict, precio_alto: float, precio_bajo: float, atr_valor: float, p: ParametrosRiesgo | None = None) -> dict:
+    """Mueve el stop a favor de la posición con una vela ya cerrada; nunca lo aleja.
+
+    El trailing se arma cuando el precio avanza `trailing_activacion_atr` ATR desde la entrada.
+    Desde entonces el stop sigue al mejor precio a `trailing_distancia_atr` ATR de distancia.
+
+    Args:
+        posicion: Posición abierta (admite posiciones creadas antes de existir el trailing).
+        precio_alto: Máximo de la vela cerrada.
+        precio_bajo: Mínimo de la vela cerrada.
+        atr_valor: ATR actual.
+
+    Returns:
+        Copia de la posición con `sl`, `extremo` y `trailing_activo` actualizados.
+    """
+    p = p or ParametrosRiesgo.desde_config()
+    nueva = dict(posicion)
+    if not p.trailing_habilitado or atr_valor <= 0:
+        return nueva
+    entrada = float(posicion["entry_price"])
+    extremo = float(posicion.get("extremo", entrada))
+    largo = posicion["side"] == "long"
+    extremo = max(extremo, precio_alto) if largo else min(extremo, precio_bajo)
+    avance = extremo - entrada if largo else entrada - extremo
+    armado = bool(posicion.get("trailing_activo")) or avance >= p.trailing_activacion_atr * atr_valor
+    nueva.update({"extremo": extremo, "trailing_activo": armado})
+    if armado:
+        distancia = p.trailing_distancia_atr * atr_valor
+        nueva["sl"] = max(posicion["sl"], extremo - distancia) if largo else min(posicion["sl"], extremo + distancia)
+    return nueva

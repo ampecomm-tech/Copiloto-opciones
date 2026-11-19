@@ -176,19 +176,23 @@ def enviar_orden_multipata(legs: list[dict[str, Any]], qty: int, limite: float |
     return r.json()
 
 
-def enviar_orden_accion(symbol: str, lado: str, qty: float) -> dict[str, Any]:
-    """Orden de mercado de acciones/ETFs en Alpaca Paper (para el bot). Permite fracciones en compras."""
-    cuerpo = {"symbol": symbol, "qty": str(round(qty, 4)) if lado == "buy" else str(int(qty)), "side": lado, "type": "market", "time_in_force": "day"}
+def enviar_orden_accion(symbol: str, lado: str, qty: float, abre_corto: bool = False) -> dict[str, Any]:
+    """Orden de mercado de acciones/ETFs en Alpaca Paper (para el bot).
+
+    Permite fracciones al comprar y al cerrar largos; los cortos se abren solo con acciones enteras.
+    """
+    cantidad = str(int(qty)) if abre_corto else f"{qty:.4f}".rstrip("0").rstrip(".")
+    cuerpo = {"symbol": symbol, "qty": cantidad, "side": lado, "type": "market", "time_in_force": "day"}
     r = requests.post(f"{_base()}/v2/orders", headers=_headers(), json=cuerpo, timeout=20)
     if r.status_code >= 400:
         raise RuntimeError(f"Alpaca rechazó la orden ({r.status_code}): {r.text[:300]}")
     return r.json()
 
 
-def orden(order_id: str) -> dict[str, Any] | None:
-    """Consulta una orden por id."""
+def orden(order_id: str, ttl: float = 5) -> dict[str, Any] | None:
+    """Consulta una orden por id (`ttl=0` evita la caché)."""
     try:
-        return _get(f"{_base()}/v2/orders/{order_id}", ttl=5)
+        return _get(f"{_base()}/v2/orders/{order_id}", ttl=ttl)
     except Exception:
         return None
 

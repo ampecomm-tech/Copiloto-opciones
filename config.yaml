@@ -65,12 +65,17 @@ bot:
   forzar_paper: false          # true = el bot no envía órdenes a Binance testnet ni Alpaca (solo paper interno)
   resumen_diario_hora_utc: 23  # hora UTC del resumen diario de Gemini en #sistema
   estrategias_por_defecto: ["random_forest", "ema50_chandelier", "rsi_reversion", "macd_cross", "voting"]
+  alpaca_confirmacion_intentos: 6    # consultas para confirmar el llenado de una orden de Alpaca
+  alpaca_confirmacion_espera_s: 0.5  # segundos entre consultas
   riesgo:
     atr_periodo: 14
     sl_atr_mult: 1.5
     tp_atr_mult: 3.0
     riesgo_por_operacion_pct: 0.02
     perdida_diaria_max_pct: 0.05
+    trailing_habilitado: true      # false = SL y TP fijos
+    trailing_activacion_atr: 1.0   # ganancia en ATR que arma el trailing; desde ahí deja de aplicar el TP fijo
+    trailing_distancia_atr: 2.0    # distancia en ATR entre el mejor precio y el stop
   random_forest:
     umbral_compra: 0.58
     umbral_venta: 0.42

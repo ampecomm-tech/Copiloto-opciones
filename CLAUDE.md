@@ -254,7 +254,7 @@ class Strategy(Protocol):
 
 - Estrategias: `random_forest`, `ema50_chandelier`, `rsi_reversion`, `macd_cross`, `voting`.
 - Cada combinación (activo × estrategia) tiene su propio capital virtual y se activa/pausa desde la app (el runner lee el estado de la DB en cada ciclo; no requiere reinicio).
-- Riesgo (`risk.py`), igual para todas: SL y TP basados en ATR, tamaño de posición por volatilidad, pérdida diaria máxima (kill-switch).
+- Riesgo (`risk.py`), igual para todas: SL y TP basados en ATR, trailing stop por ATR (se arma con la ganancia configurada y desde ahí reemplaza al TP fijo), tamaño de posición por volatilidad, pérdida diaria máxima (kill-switch). Cada vela cerrada se revisa una sola vez y nunca la vela de entrada.
 - Features del RF: indicadores técnicos (EMA, RSI, MACD, ATR, Bollinger, retornos rezagados, volumen) + último puntaje de sentimiento si existe.
 - Timeframe por defecto: 15 min (configurable).
 - Tabla de posiciones: ROI, Sharpe, drawdown máx., win rate por combinación.

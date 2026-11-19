@@ -10,6 +10,7 @@ Cualquier error del venue se registra, se emite a `sistema` y la orden cae a pap
 """
 from __future__ import annotations
 
+import time
 from typing import Any
 
 from core.config import cfg, env
@@ -50,7 +51,25 @@ def _paper(qty: float, precio_ref: float) -> dict[str, Any]:
     return {"precio": float(precio_ref), "qty": float(qty), "venue_order_id": None, "modo": "paper"}
 
 
-def ejecutar_orden(symbol: str, venue: str, lado: str, qty: float, precio_ref: float) -> dict[str, Any]:
+def _resultado_alpaca(orden: dict[str, Any], qty: float, precio_ref: float) -> dict[str, Any]:
+    """Espera el llenado de una orden de Alpaca y devuelve la cantidad y el precio reales.
+
+    Alpaca responde al envío con `filled_qty` en "0": esa cantidad no debe guardarse como la de la posición.
+    """
+    actual = orden
+    for _ in range(int(cfg("bot", "alpaca_confirmacion_intentos", default=6))):
+        if actual.get("status") == "filled":
+            break
+        time.sleep(float(cfg("bot", "alpaca_confirmacion_espera_s", default=0.5)))
+        actual = alpaca.orden(str(orden.get("id")), ttl=0) or actual
+    if actual.get("status") in ("rejected", "canceled", "expired"):
+        raise RuntimeError(f"Alpaca dejó la orden en estado {actual.get('status')}")
+    llenada = float(actual.get("filled_qty") or 0)
+    return {"precio": float(actual.get("filled_avg_price") or precio_ref), "qty": llenada if llenada > 0 else float(actual.get("qty") or qty),
+            "venue_order_id": str(orden.get("id")), "modo": "alpaca_paper"}
+
+
+def ejecutar_orden(symbol: str, venue: str, lado: str, qty: float, precio_ref: float, abre_corto: bool = False) -> dict[str, Any]:
     """Envía una orden de mercado al venue del activo o la simula en paper.
 
     Args:
@@ -59,6 +78,7 @@ def ejecutar_orden(symbol: str, venue: str, lado: str, qty: float, precio_ref: f
         lado: "buy" o "sell".
         qty: Cantidad.
         precio_ref: Último precio conocido (para paper o si el venue no devuelve precio).
+        abre_corto: True si la orden abre un corto (Alpaca solo los acepta en acciones enteras).
     """
     if _forzar_paper() or venue == "paper":
         return _paper(qty, precio_ref)
@@ -78,9 +98,7 @@ def ejecutar_orden(symbol: str, venue: str, lado: str, qty: float, precio_ref: f
                 raise RuntimeError("faltan ALPACA_API_KEY/ALPACA_SECRET_KEY")
             if alpaca.mercado_abierto() is False:
                 raise RuntimeError("mercado de EE. UU. cerrado")
-            orden = alpaca.enviar_orden_accion(symbol, lado, qty)
-            precio = float(orden.get("filled_avg_price") or precio_ref)
-            return {"precio": precio, "qty": float(orden.get("filled_qty") or orden.get("qty") or qty), "venue_order_id": str(orden.get("id")), "modo": "alpaca_paper"}
+            return _resultado_alpaca(alpaca.enviar_orden_accion(symbol, lado, qty, abre_corto), qty, precio_ref)
         raise RuntimeError(f"venue desconocido {venue}")
     except Exception as e:
         log_bot.error("Orden en %s falló (%s %s %s): %s", venue, lado, qty, symbol, e)
