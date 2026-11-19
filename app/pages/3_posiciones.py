@@ -31,6 +31,69 @@ def _usd(x: float, signo: bool = True) -> str:
     return f"{x:+,.2f}" if signo else f"{x:,.2f}"
 
 
+_ROJO_T, _VERDE_T, _GRIS_T = "rgba(242, 85, 90, 0.22)", "rgba(61, 214, 140, 0.22)", "rgba(138, 148, 166, 0.16)"
+
+
+def _medidores_portafolio(gp: dict, umbral: float) -> None:
+    """Medidores del portafolio: delta en dólares contra el umbral de alerta de cobertura y theta diaria."""
+    lim = ui.escala_simetrica(gp["delta_dolares"], 2 * umbral)
+    th = ui.escala_simetrica(gp["theta_diaria"], 10.0)
+    c = st.columns(2, gap="medium")
+    with c[0], st.container(border=True):
+        st.plotly_chart(ui.medidor(gp["delta_dolares"], -lim, lim, "Delta del portafolio", " USD", 0,
+                                   [(-lim, -umbral, _ROJO_T), (-umbral, umbral, _GRIS_T), (umbral, lim, _ROJO_T)]),
+                        use_container_width=True, key="med_port_delta", config=ui.SIN_BARRA_PLOTLY)
+        st.caption(f"Cuánto gana o pierde el portafolio por cada dólar que se mueve el subyacente, en dólares de exposición. "
+                   f"Zona roja: más de {umbral:,.0f} USD en cualquier dirección, se sugiere cubrir.")
+    with c[1], st.container(border=True):
+        st.plotly_chart(ui.medidor(gp["theta_diaria"], -th, th, "Theta diaria del portafolio", " USD", 2,
+                                   [(-th, 0, _ROJO_T), (0, th, _VERDE_T)]),
+                        use_container_width=True, key="med_port_theta", config=ui.SIN_BARRA_PLOTLY)
+        st.caption("Lo que el portafolio gana o pierde cada día solo por el paso del tiempo. Rojo: el tiempo cuesta dinero; verde: el tiempo paga.")
+
+
+def _medidores_posicion(p: dict, S: float | None) -> None:
+    """Cuatro medidores tipo válvula con las griegas de una posición, normalizadas para que se puedan comparar.
+
+    - Delta por unidad del subyacente, de −1 a 1: dirección de la apuesta.
+    - Gamma: cuánto cambia esa delta si el subyacente se mueve 1 %.
+    - Theta: USD por día como porcentaje de la pérdida máxima.
+    - Vega: USD por un punto más de IV como porcentaje de la pérdida máxima.
+    """
+    g = p.get("greeks") or {}
+    S = S or float(p.get("spot_entrada") or 0) or 1.0
+    unidades = max((abs(float(l["qty"])) * float(p.get("multiplicador", 1.0)) for l in p["legs"]), default=1.0) or 1.0
+    perdida = max(float(p.get("max_perdida") or 0), 1e-9)
+    delta, gamma, theta, vega = (float(g.get(k, 0.0)) for k in ("delta", "gamma", "theta", "vega"))
+    du = delta / unidades
+    gu = gamma * S * 0.01 / unidades
+    sentido = "alcista" if du > 0.1 else "bajista" if du < -0.1 else "casi neutral"
+    valor = p.get("last_value") if p.get("last_value") is not None else p["entry_cost"]
+    pnl = valor - p["entry_cost"]
+    with st.container(border=True):
+        st.html("<div class='cp-titulo'>"
+                f"<span class='cp-titulo__texto'>#{p['id']} · {ui.esc(p['asset'])} · {ui.esc(p['nombre'])}</span>"
+                f"{ui.pill(f'P&L {pnl:+,.2f} USD', _tono(pnl))}{ui.pill(NOMBRE_VENUE.get(p.get('venue', 'paper'), p.get('venue')), 'gris', punto=False)}</div>")
+        tp, vp = theta / perdida * 100, vega / perdida * 100
+        lg, lt, lv = ui.escala_simetrica(gu, 0.1), ui.escala_simetrica(tp, 5.0), ui.escala_simetrica(vp, 10.0)
+        medidores = [
+            (ui.medidor(du, -1, 1, "Delta", "", 2, [(-1, -0.1, _ROJO_T), (-0.1, 0.1, _GRIS_T), (0.1, 1, _VERDE_T)]),
+             f"Dirección {sentido}: {delta * S:+,.0f} USD de exposición al precio.", "d"),
+            (ui.medidor(gu, -lg, lg, "Gamma", "", 3, [(-lg, 0, _ROJO_T), (0, lg, _VERDE_T)]),
+             "Cuánto cambia la delta si el precio se mueve 1 %. Verde: los movimientos grandes ayudan.", "g"),
+            (ui.medidor(tp, -lt, lt, "Theta", " %", 2, [(-lt, 0, _ROJO_T), (0, lt, _VERDE_T)]),
+             f"{theta:+,.2f} USD por día, como % de la pérdida máxima.", "t"),
+            (ui.medidor(vp, -lv, lv, "Vega", " %", 2, [(-lv, 0, _GRIS_T), (0, lv, _GRIS_T)]),
+             f"{vega:+,.2f} USD si la IV sube 1 punto, como % de la pérdida máxima.", "v"),
+        ]
+        for fila in (medidores[:2], medidores[2:]):
+            cols = st.columns(2, gap="medium")
+            for col, (fig, texto, clave) in zip(cols, fila):
+                with col:
+                    st.plotly_chart(fig, use_container_width=True, key=f"med_{clave}_{p['id']}", config=ui.SIN_BARRA_PLOTLY)
+                    st.caption(texto)
+
+
 def render() -> None:
     """Dibuja la pestaña."""
     usuario = auth.usuario_actual() or {}
@@ -70,6 +133,7 @@ def render() -> None:
             ("Vega total", f"{gp['vega_total']:+,.2f}", "USD por 1% de IV"),
             ("Gamma $", f"{gp['gamma_dolares']:+,.2f}", "por 1% de movimiento"),
         ])
+        _medidores_portafolio(gp, float(cfg("posiciones", "umbral_delta_dolares", default=500)))
 
         st.subheader("Posiciones abiertas")
         filas = []
@@ -96,6 +160,12 @@ def render() -> None:
                 "Vega": st.column_config.NumberColumn(format="%+.2f"),
             },
         )
+
+        st.subheader("Griegas de cada posición")
+        st.caption("La aguja muestra dónde está cada griega dentro de su escala. Delta y gamma van por unidad del subyacente; theta y vega, como porcentaje de la pérdida máxima, "
+                   "para comparar posiciones de distinto tamaño. Debajo de cada título va el valor en dólares.")
+        for p in abiertas:
+            _medidores_posicion(p, spots.get(p["asset"]))
 
         if gp["por_activo"]:
             with st.expander("Griegas por activo", icon=":material/table_chart:"):

@@ -330,13 +330,131 @@ def grafica_payoff(estrategia: dict[str, Any], r: float, dias: float = 0.0, iv_s
     return estilo_figura(fig, 360, xaxis_title="Precio del subyacente", yaxis_title="P&L (USD)")
 
 
+def _lineas_var(fig: go.Figure, var: float | None, cvar: float | None, nivel: str = "95%") -> None:
+    """Marca en una distribución el VaR y el CVaR (pérdidas positivas, dibujadas en −VaR y −CVaR)."""
+    if var is not None and cvar is not None and var == var and cvar == cvar and abs(cvar - var) <= 1e-6 * max(1.0, abs(var)):
+        fig.add_vline(x=-var, line=dict(color=TOKENS["rojo"], width=2),
+                      annotation_text=f"VaR y CVaR {nivel}: {-var:,.2f}", annotation_position="top left", annotation_font_color=TOKENS["rojo"])
+        return
+    if var is not None and var == var:
+        fig.add_vline(x=-var, line=dict(color=TOKENS["amarillo"], width=2, dash="dash"),
+                      annotation_text=f"VaR {nivel}: {-var:,.2f}", annotation_position="top left", annotation_font_color=TOKENS["amarillo"])
+    if cvar is not None and cvar == cvar:
+        fig.add_vline(x=-cvar, line=dict(color=TOKENS["rojo"], width=2),
+                      annotation_text=f"CVaR {nivel}: {-cvar:,.2f}", annotation_position="bottom left", annotation_font_color=TOKENS["rojo"])
+
+
 def grafica_histograma(mc: dict[str, Any]) -> go.Figure:
-    """Histograma del P&L simulado."""
+    """Histograma del P&L simulado con el VaR y el CVaR al 95 % marcados; la cola del peor 5 % va en rojo."""
     h = mc.get("histograma", {"x": [], "y": []})
-    colores = [TOKENS["rojo"] if x < 0 else TOKENS["verde"] for x in h["x"]]
-    fig = go.Figure(go.Bar(x=h["x"], y=h["y"], marker_color=colores, marker_line_width=0))
-    return estilo_figura(fig, 260, xaxis_title="P&L al horizonte (USD)", yaxis_title="Trayectorias",
-                         title=f"Monte Carlo ({mc.get('n', 0):,} trayectorias)", bargap=0.05)
+    var = mc.get("var_95")
+    ancho = (h["x"][1] - h["x"][0]) if len(h["x"]) > 1 else 0.0
+    corte = (-var if var is not None else 0.0) + ancho / 2  # la barra que contiene al VaR también es cola
+    colores = [TOKENS["rojo"] if x <= corte else TOKENS["naranja"] if x < 0 else TOKENS["verde"] for x in h["x"]]
+    fig = go.Figure(go.Bar(x=h["x"], y=h["y"], marker_color=colores, marker_line_width=0, name="Trayectorias"))
+    _lineas_var(fig, var, mc.get("cvar_95"))
+    return estilo_figura(fig, 300, xaxis_title="P&L al horizonte (USD)", yaxis_title="Trayectorias",
+                         title=f"P&L simulado ({mc.get('n', 0):,} trayectorias)", bargap=0.05, showlegend=False)
+
+
+def grafica_precio_final(mc: dict[str, Any], estrategia: dict[str, Any]) -> go.Figure:
+    """Distribución del precio del subyacente al horizonte, coloreada por la zona de ganancia al vencimiento."""
+    from quant.strategies_options import payoff_vencimiento
+
+    h = mc.get("histograma_precios", {"x": [], "y": []})
+    pnl = payoff_vencimiento(estrategia["legs"], pd.Series(h["x"], dtype=float).values, estrategia["multiplicador"]) if h["x"] else []
+    colores = [TOKENS["verde"] if p > 0 else TOKENS["rojo"] for p in pnl]
+    fig = go.Figure(go.Bar(x=h["x"], y=h["y"], marker_color=colores, marker_line_width=0, name="Trayectorias"))
+    fig.add_vline(x=estrategia["spot"], line=dict(color=TOKENS["texto_2"], dash="dash", width=1), annotation_text="Spot hoy", annotation_font_color=TOKENS["texto_2"])
+    for be in estrategia.get("breakevens", []):
+        fig.add_vline(x=be, line=dict(color=TOKENS["amarillo"], width=1.5, dash="dot"), annotation_text=f"Breakeven {be:,.0f}",
+                      annotation_position="bottom right", annotation_font_color=TOKENS["amarillo"])
+    return estilo_figura(fig, 300, xaxis_title="Precio del subyacente al horizonte", yaxis_title="Trayectorias",
+                         title="¿Dónde termina el precio? Verde: zona de ganancia al vencimiento", bargap=0.05, showlegend=False)
+
+
+def grafica_cdf(mc: dict[str, Any]) -> go.Figure:
+    """Probabilidad acumulada del P&L: qué tan probable es terminar por debajo de cada resultado."""
+    q = mc.get("cuantiles_pnl") or []
+    prob = [i / (len(q) - 1) * 100 for i in range(len(q))] if len(q) > 1 else []
+    fig = go.Figure(go.Scatter(x=q, y=prob, mode="lines", line=dict(color=TOKENS["acento"], width=2.5), name="P(P&L ≤ x)",
+                               hovertemplate="P&L ≤ %{x:,.2f} USD con probabilidad %{y:.0f} %<extra></extra>"))
+    fig.add_hline(y=5, line=dict(color=TOKENS["amarillo"], width=1, dash="dash"), annotation_text="5 % peor", annotation_font_color=TOKENS["amarillo"])
+    fig.add_vline(x=0, line=dict(color=TOKENS["texto_3"], width=1))
+    p_perder = (1 - mc.get("prob_ganancia", 0)) * 100
+    fig.add_annotation(x=0, y=p_perder, text=f"Prob. de perder: {p_perder:.0f} %", showarrow=True, arrowcolor=TOKENS["texto_2"], font=dict(color=TOKENS["texto"]))
+    return estilo_figura(fig, 300, yaxis_title="Probabilidad acumulada (%)",
+                         title="Probabilidad acumulada del P&L", showlegend=False, yaxis=dict(range=[0, 100], gridcolor=TOKENS["borde"]),
+                         xaxis=dict(range=[q[0], q[99]] if len(q) > 99 else None, gridcolor=TOKENS["borde"], title="P&L al horizonte (USD), hasta el percentil 99"))
+
+
+def grafica_var(valores: Any, r: dict[str, Any], eje_x: str, ajuste_normal: bool = False) -> go.Figure:
+    """Distribución de una muestra (retornos o P&L) con VaR y CVaR al 95 % y, opcionalmente, la normal ajustada.
+
+    Con muestras grandes se recortan los extremos de la vista (0.2 % por lado) para que las colas largas no aplasten el histograma;
+    el VaR y el CVaR se calculan con la muestra completa.
+    """
+    import numpy as np
+    from scipy import stats as sst
+
+    x = np.asarray(valores, dtype=float)
+    x = x[~np.isnan(x)]
+    if len(x) > 200:
+        bajo, alto = np.quantile(x, [0.002, 0.998])
+        bajo = min(bajo, -r.get("cvar_95", 0.0) * 1.1)
+        x = x[(x >= bajo) & (x <= alto)]
+    bins = int(min(60, max(10, len(x) // 4)))
+    h, bordes = np.histogram(x, bins=bins)
+    centros = (bordes[:-1] + bordes[1:]) / 2
+    corte = -r.get("var_95", 0.0)
+    colores = [TOKENS["rojo"] if c <= corte else TOKENS["acento"] for c in centros]
+    fig = go.Figure(go.Bar(x=centros, y=h, marker_color=colores, marker_line_width=0, name="Observado"))
+    if ajuste_normal and len(x) > 2:
+        malla = np.linspace(bordes[0], bordes[-1], 200)
+        dens = sst.norm.pdf(malla, r["media"], r["desviacion"]) * len(x) * (bordes[1] - bordes[0])
+        fig.add_trace(go.Scatter(x=malla, y=dens, mode="lines", line=dict(color=TOKENS["texto_2"], width=1.5, dash="dot"), name="Normal ajustada"))
+    _lineas_var(fig, r.get("var_95"), r.get("cvar_95"))
+    return estilo_figura(fig, 320, xaxis_title=eje_x, yaxis_title="Frecuencia", bargap=0.04, margin=dict(l=8, r=8, t=16, b=8),
+                         legend=dict(orientation="h", yanchor="top", y=-0.22, x=0, font=dict(size=11)))
+
+
+SIN_BARRA_PLOTLY = {"displayModeBar": False}
+"""`config` de `st.plotly_chart` para gráficas pequeñas donde la barra de herramientas tapa el título."""
+
+
+def escala_simetrica(valor: float, minima: float) -> float:
+    """Límite simétrico de un medidor: `minima`, o un poco más que el valor si este se sale."""
+    import math
+
+    if abs(valor) <= minima:
+        return minima
+    paso = 10 ** math.floor(math.log10(abs(valor) * 1.25))
+    return math.ceil(abs(valor) * 1.25 / paso) * paso
+
+
+def medidor(valor: float, minimo: float, maximo: float, titulo: str, sufijo: str = "", decimales: int = 2,
+            bandas: list[tuple[float, float, str]] | None = None) -> go.Figure:
+    """Medidor tipo válvula (gauge) para una griega: aguja blanca en el valor sobre bandas de color.
+
+    Args:
+        valor: Valor a mostrar; si se sale de la escala, la aguja se queda en el extremo y el número muestra el valor real.
+        minimo, maximo: Escala del medidor.
+        titulo: Nombre de la griega.
+        sufijo: Unidad que acompaña al número.
+        bandas: Lista de `(desde, hasta, color)` para pintar zonas de la escala.
+    """
+    aguja = max(min(valor, maximo), minimo)
+    pasos = [dict(range=[a, b], color=c) for a, b, c in (bandas or [])]
+    largo = len(f"{valor:+,.{decimales}f}{sufijo}")
+    fig = go.Figure(go.Indicator(
+        mode="gauge+number", value=valor,
+        number=dict(suffix=sufijo, valueformat=f"+,.{decimales}f", font=dict(size=24 if largo <= 8 else 17, color=TOKENS["texto"])),
+        title=dict(text=f"<b>{titulo}</b>", font=dict(size=14, color=TOKENS["texto"])),
+        gauge=dict(axis=dict(range=[minimo, maximo], tickcolor=TOKENS["texto_3"], tickfont=dict(size=10, color=TOKENS["texto_3"]), nticks=5),
+                   bar=dict(color="rgba(0,0,0,0)", thickness=0.01), bgcolor=TOKENS["superficie_2"], borderwidth=0, steps=pasos,
+                   threshold=dict(line=dict(color=TOKENS["texto"], width=5), thickness=0.95, value=aguja)),
+    ))
+    return estilo_figura(fig, 200, margin=dict(l=28, r=28, t=40, b=4))
 
 
 CANAL_DISCORD = {"mesa": "#mesa-agentes", "sentimiento": "#sentimiento-x", "bot_senales": "#bot-señales",

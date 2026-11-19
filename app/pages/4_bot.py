@@ -12,6 +12,7 @@ from core.config import RAIZ, cfg
 from core.tickers import buscar
 from data_sources.market import velas
 from quant.portfolio import metricas_desempeno
+from quant.riesgo import resumen_riesgo
 
 SALIDA = RAIZ / "validation" / "output"
 NOMBRE_VENUE = {"binance_spot_testnet": "Binance spot testnet", "alpaca_paper": "Alpaca Paper", "paper": "Paper interno"}
@@ -143,7 +144,9 @@ def _activo(a: dict, cap0: float) -> None:
         met = metricas_desempeno(eq, periodos_por_anio=365)
         wr = (t["pnl"] > 0).mean() if len(t) else None
         filas.append({"Activa": bool(e["active"]), "Estrategia": e["strategy"], "Capital": float(e["capital"]), "ROI": met["roi"] * 100,
-                      "Sharpe": met["sharpe"], "DD máx.": met["max_drawdown"] * 100, "Win rate": f"{wr:.0%}" if wr is not None else "—",
+                      "Sharpe": met["sharpe"], "DD máx.": met["max_drawdown"] * 100,
+                      "VaR 95%": met["var_95"] * 100 if len(t) >= 2 else None, "CVaR 95%": met["cvar_95"] * 100 if len(t) >= 2 else None,
+                      "Win rate": f"{wr:.0%}" if wr is not None else "—",
                       "Trades": len(t), "Posición": _texto_posicion(db.de_json(e.get("position_json")))})
     if filas:
         df = pd.DataFrame(filas)
@@ -155,6 +158,8 @@ def _activo(a: dict, cap0: float) -> None:
                 "ROI": st.column_config.NumberColumn(format="%+.1f%%"),
                 "Sharpe": st.column_config.NumberColumn(format="%.2f"),
                 "DD máx.": st.column_config.NumberColumn(format="%.1f%%"),
+                "VaR 95%": st.column_config.NumberColumn(format="%.2f%%", help="Pérdida por operación que solo se supera en el 5 % de las peores operaciones (histórico)"),
+                "CVaR 95%": st.column_config.NumberColumn(format="%.2f%%", help="Pérdida promedio dentro de ese 5 % de peores operaciones (Expected Shortfall)"),
                 "Posición": st.column_config.TextColumn(width="large"),
             })
         for antes, despues in zip(df.itertuples(), editado.itertuples()):
@@ -216,6 +221,49 @@ def _senales_y_trades() -> None:
 
 # --- Validación --------------------------------------------------------------------------------
 
+def _riesgo_activo(aid: int, simbolo: str) -> None:
+    """VaR y CVaR del activo: retornos de 15 minutos del subyacente y P&L de las operaciones del bot, con sus distribuciones."""
+    st.caption("VaR: pérdida que solo se supera en el peor 5 % (o 1 %) de los casos. CVaR o Expected Shortfall: pérdida promedio dentro de ese peor 5 %. "
+               "Se comparan la versión histórica y la normal: si la histórica es mayor, la cola real es más pesada que la de una normal.")
+    asset = db.consultar_uno("SELECT * FROM bot_assets WHERE id=?", (aid,))
+    try:
+        df = velas(asset["symbol"], asset["venue"])
+        rets = df["close"].pct_change().dropna() * 100
+    except Exception:
+        rets = pd.Series(dtype=float)
+    trades = pd.DataFrame(db.consultar("SELECT strategy, pnl FROM bot_trades WHERE asset_id=? AND exit_ts IS NOT NULL AND qty > 0 AND pnl IS NOT NULL", (aid,)))
+
+    c1, c2 = st.columns(2, gap="large")
+    with c1:
+        st.markdown(f"**Subyacente: retornos de {cfg('bot', 'timeframe')}**")
+        if len(rets) > 20:
+            r = resumen_riesgo(rets.values)
+            ui.franja_stats([("VaR 95%", f"{r['var_95']:.3f} %", f"normal {r['var_95_normal']:.3f} %"),
+                             ("CVaR 95%", f"{r['cvar_95']:.3f} %", f"normal {r['cvar_95_normal']:.3f} %"),
+                             ("CVaR 99%", f"{r['cvar_99']:.3f} %", f"curtosis {r['curtosis']:.1f}")])
+            st.caption(f"Distribución de {len(rets):,} velas de {simbolo}. Rojo: el peor 5 %. Punteada: la normal con la misma media y desviación.")
+            st.plotly_chart(ui.grafica_var(rets.values, r, "Retorno por vela (%)", ajuste_normal=True),
+                            use_container_width=True, key=f"var_sub_{aid}", config=ui.SIN_BARRA_PLOTLY)
+        else:
+            st.caption("No se pudieron descargar velas suficientes.")
+    with c2:
+        st.markdown("**Bot: P&L por operación cerrada (USD)**")
+        if len(trades) >= 5:
+            r = resumen_riesgo(trades["pnl"].values)
+            ui.franja_stats([("VaR 95%", f"{r['var_95']:,.2f}", "USD por operación"), ("CVaR 95%", f"{r['cvar_95']:,.2f}", "USD por operación"),
+                             ("Operaciones", str(r["n"]), "todas las estrategias")])
+            st.caption(f"Distribución de {len(trades)} operaciones cerradas de {simbolo}. Rojo: el peor 5 %.")
+            st.plotly_chart(ui.grafica_var(trades["pnl"].values, r, "P&L por operación (USD)"),
+                            use_container_width=True, key=f"var_bot_{aid}", config=ui.SIN_BARRA_PLOTLY)
+            filas = []
+            for est, g in trades.groupby("strategy"):
+                rr = resumen_riesgo(g["pnl"].values)
+                filas.append({"Estrategia": est, "Operaciones": len(g), "P&L medio": rr.get("media"), "VaR 95%": rr.get("var_95"), "CVaR 95%": rr.get("cvar_95")})
+            st.dataframe(pd.DataFrame(filas), hide_index=True, use_container_width=True,
+                         column_config={k: st.column_config.NumberColumn(format="%.2f") for k in ("P&L medio", "VaR 95%", "CVaR 95%")})
+        else:
+            st.caption("Hacen falta al menos 5 operaciones cerradas para estimar la cola.")
+
 def _validacion() -> None:
     """Tabla de hiperparámetros, métricas, matriz de confusión y Diebold-Mariano por activo; exporta CSV/PNG."""
     st.subheader("Validación cuantitativa")
@@ -244,7 +292,9 @@ def _validacion() -> None:
     comp = {"random_forest": {k: mejor.get(k) for k in ("accuracy", "precision", "recall", "f1")}}
     comp.update({k: {m: v.get(m) for m in ("accuracy", "precision", "recall", "f1")} for k, v in (met.get("estrategias") or {}).items()})
 
-    t_hp, t_cls, t_dm, t_imp = st.tabs(["Hiperparámetros", "Clasificación", "Diebold-Mariano", "Importancia de features"])
+    t_hp, t_cls, t_dm, t_riesgo, t_imp = st.tabs(["Hiperparámetros", "Clasificación", "Diebold-Mariano", "Riesgo: VaR y CVaR", "Importancia de features"])
+    with t_riesgo:
+        _riesgo_activo(aid, sel)
     with t_hp:
         if not tabla.empty:
             cols = [c for c in ["n_estimators", "max_depth", "min_samples_leaf", "accuracy", "precision", "recall", "f1", "rmse", "mse", "mae", "mape", "smape", "variance_score"] if c in tabla]

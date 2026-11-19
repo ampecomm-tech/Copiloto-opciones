@@ -130,6 +130,9 @@ def simular(estrategia: Estrategia, S: float, r: float, horizonte_dias: float | 
     pct = np.percentile(pnl, [5, 25, 50, 75, 95])
     ev = float(pnl.mean())
     max_perdida = max(estrategia["max_perdida"], 1e-9)
+    from quant.riesgo import var_cvar_historico
+
+    r95, r99 = var_cvar_historico(pnl, 0.95), var_cvar_historico(pnl, 0.99)
     return {
         "n": n,
         "sigma": float(sigma),
@@ -146,12 +149,22 @@ def simular(estrategia: Estrategia, S: float, r: float, horizonte_dias: float | 
         "pnl_p95": float(pct[4]),
         "prob_perdida_total": float((pnl <= -0.95 * estrategia["max_perdida"]).mean()),
         "precio_final_medio": float(precios.mean()),
+        "var_95": r95["var"], "cvar_95": r95["cvar"], "var_99": r99["var"], "cvar_99": r99["cvar"],
         "histograma": _histograma(pnl),
+        "histograma_precios": _histograma(precios, 50),
+        "cuantiles_pnl": np.percentile(pnl, np.arange(0, 101)).round(4).tolist(),
     }
 
 
 def _histograma(pnl: np.ndarray, bins: int = 40) -> dict[str, list[float]]:
-    """Histograma compacto del P&L para graficar."""
-    h, edges = np.histogram(pnl, bins=bins)
+    """Histograma compacto para graficar.
+
+    El rango va del percentil 0.5 al 99.5 y los valores de fuera se suman a la barra del extremo, para que una cola
+    larga (por ejemplo, la ganancia ilimitada de un long call) no aplaste la gráfica. Ninguna trayectoria se pierde.
+    """
+    bajo, alto = np.percentile(pnl, [0.5, 99.5])
+    if alto <= bajo:
+        bajo, alto = float(np.min(pnl)), float(np.max(pnl)) + 1e-9
+    h, edges = np.histogram(np.clip(pnl, bajo, alto), bins=bins, range=(bajo, alto))
     centros = (edges[:-1] + edges[1:]) / 2
     return {"x": centros.tolist(), "y": h.tolist()}

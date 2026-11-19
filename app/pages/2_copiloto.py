@@ -141,6 +141,7 @@ def _mostrar_candidata(i: int, e: dict[str, Any], res: dict[str, Any], recomenda
     g1, g2 = st.columns([3, 2])
     g1.plotly_chart(ui.grafica_payoff(e, res["r"], dias_w, iv_w, spot_w), use_container_width=True, key=f"payoff_{i}")
     g2.plotly_chart(ui.grafica_histograma(mc), use_container_width=True, key=f"hist_{i}")
+    _riesgo_candidata(i, e, mc)
 
     patas_txt = ", ".join(f"{'Compra' if l['side'] > 0 else 'Vende'} {l['qty']:g} {l['type']} K={l['strike']:g} @ {l['price']:.2f}" for l in e["legs"])
     c_g, c_s = st.columns(2, gap="medium")
@@ -171,6 +172,31 @@ def _mostrar_candidata(i: int, e: dict[str, Any], res: dict[str, Any], recomenda
                      {"tipo": e["tipo"], "patas": patas_txt, "max_ganancia": "ilimitada" if e.get("ganancia_ilimitada") else e["max_ganancia"], "max_perdida": e["max_perdida"], "breakevens": e["breakevens"], "prob_ganancia": mc["prob_ganancia"]},
                      etiqueta="¿Cómo funciona esta estrategia?")
     _confirmar(i, res, recomendada)
+
+
+def _riesgo_candidata(i: int, e: dict[str, Any], mc: dict[str, Any]) -> None:
+    """Riesgo de cola de la candidata: VaR y CVaR del Monte Carlo, distribución del precio al horizonte y probabilidad acumulada."""
+    if mc.get("var_95") is None:
+        return  # análisis guardado antes de que existieran estas métricas
+    with st.container(border=True):
+        st.markdown("**Riesgo de la estrategia (Monte Carlo)**")
+        st.caption("Pérdidas en USD al horizonte. VaR: pérdida que solo se supera en el peor 5 % (o 1 %) de las trayectorias. "
+                   "CVaR: pérdida promedio dentro de ese peor 5 % (o 1 %). Un valor negativo significa que incluso esos escenarios terminan en ganancia.")
+        m = st.columns(5)
+        m[0].metric("VaR 95 %", f"{mc['var_95']:,.2f}", border=True)
+        m[1].metric("CVaR 95 %", f"{mc['cvar_95']:,.2f}", border=True)
+        m[2].metric("VaR 99 %", f"{mc['var_99']:,.2f}", border=True)
+        m[3].metric("CVaR 99 %", f"{mc['cvar_99']:,.2f}", border=True)
+        m[4].metric("CVaR 99 % / pérdida máx.", f"{mc['cvar_99'] / max(e['max_perdida'], 1e-9):.0%}", border=True,
+                    help="Qué fracción de la pérdida máxima se pierde en promedio en el peor 1 % de los escenarios")
+        t1, t2 = st.tabs(["Precio al horizonte", "Probabilidad acumulada"])
+        with t1:
+            st.plotly_chart(ui.grafica_precio_final(mc, e), use_container_width=True, key=f"precio_{i}")
+        with t2:
+            st.plotly_chart(ui.grafica_cdf(mc), use_container_width=True, key=f"cdf_{i}")
+        _boton_educativo(f"var_{i}", "qué significan el VaR y el CVaR de esta estrategia y qué tan grave es su peor escenario comparado con la pérdida máxima",
+                         {"estrategia": e["nombre"], "var_95": mc["var_95"], "cvar_95": mc["cvar_95"], "var_99": mc["var_99"], "cvar_99": mc["cvar_99"],
+                          "max_perdida": e["max_perdida"], "prob_ganancia": mc["prob_ganancia"]})
 
 
 def _confirmar(i: int, res: dict[str, Any], recomendada: bool) -> None:

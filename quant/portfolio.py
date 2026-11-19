@@ -74,20 +74,26 @@ def frontera_eficiente(retornos: pd.DataFrame, n_carteras: int = 3000, rf: float
 
 
 def metricas_desempeno(equity: pd.Series, periodos_por_anio: int = 365 * 24 * 4) -> dict[str, float]:
-    """ROI, Sharpe, Sortino y drawdown máximo de una curva de capital.
+    """ROI, Sharpe, Sortino, drawdown máximo, VaR y CVaR al 95 % de una curva de capital.
+
+    VaR y CVaR son históricos sobre los retornos de la curva (por operación si la curva es por operación),
+    expresados como pérdida positiva; NaN con menos de dos retornos.
 
     Args:
         equity: Serie de capital en el tiempo.
         periodos_por_anio: Número de periodos por año (velas de 15 min → 35,040).
     """
+    from quant.riesgo import var_cvar_historico
+
     e = pd.Series(equity).dropna().astype(float)
     if len(e) < 2 or e.iloc[0] <= 0:
-        return {"roi": 0.0, "sharpe": 0.0, "sortino": 0.0, "max_drawdown": 0.0}
+        return {"roi": 0.0, "sharpe": 0.0, "sortino": 0.0, "max_drawdown": 0.0, "var_95": float("nan"), "cvar_95": float("nan")}
     rets = e.pct_change().dropna()
+    cola = var_cvar_historico(rets.values, 0.95)
     roi = float(e.iloc[-1] / e.iloc[0] - 1)
     std = rets.std()
     sharpe = float(rets.mean() / std * np.sqrt(periodos_por_anio)) if std > 0 else 0.0
     neg = rets[rets < 0]
     sortino = float(rets.mean() / neg.std() * np.sqrt(periodos_por_anio)) if len(neg) > 1 and neg.std() > 0 else 0.0
     dd = (e / e.cummax() - 1).min()
-    return {"roi": roi, "sharpe": sharpe, "sortino": sortino, "max_drawdown": float(dd)}
+    return {"roi": roi, "sharpe": sharpe, "sortino": sortino, "max_drawdown": float(dd), "var_95": cola["var"], "cvar_95": cola["cvar"]}
