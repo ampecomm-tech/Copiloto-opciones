@@ -1,0 +1,16 @@
+{
+  "eventos_por_canal": {
+    "alertas": 16,
+    "bot_operaciones": 251,
+    "bot_senales": 659,
+    "mesa": 25,
+    "sentimiento": 15,
+    "sistema": 36
+  },
+  "senales": 1715,
+  "senales_desde": "2026-11-17T19:06:52+00:00",
+  "senales_hasta": "2026-11-19T06:05:04+00:00",
+  "operaciones_bot": 66,
+  "recomendaciones": 5,
+  "posiciones_opciones": 4
+}

@@ -1,0 +1,11 @@
+# Datos de portada del informe técnico y de la presentación.
+# Edita los integrantes y vuelve a generar con:  python scripts/generar_informe.py
+titulo: "Copiloto de Opciones con IA"
+subtitulo: "Valuación Black-Scholes, mesa de agentes de IA y bot de trading 24/7 en Google Cloud"
+materia: "Finanzas Computacionales, Algoritmos Cuantitativos e Inteligencia Artificial"
+institucion: ""
+integrantes:
+  - "Nombre del integrante"
+fecha: "19 de noviembre de 2026"
+repositorio: "https://github.com/ampecomm-tech/Copiloto-opciones"
+app: "http://34.51.52.155:8501"

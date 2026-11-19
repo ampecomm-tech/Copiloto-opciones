@@ -1,0 +1,16 @@
+activo,estrategia,venue,operaciones,operaciones_validas,cantidad_cero,salida_en_vela_de_entrada,pnl_usd,roi_pct,sharpe_por_operacion,sortino_por_operacion,max_drawdown_pct,win_rate_pct
+BTC/USDT,Cruce MACD,binance_spot_testnet,4,4,0,0,3.492,0.349,0.091,0.303,-1.178,25.0
+BTC/USDT,EMA50 + Chandelier,binance_spot_testnet,5,5,0,1,-22.073,-2.207,-1.325,-1.325,-2.207,0.0
+BTC/USDT,Random Forest,binance_spot_testnet,15,15,0,0,-4.155,-0.416,-0.044,-0.063,-2.403,40.0
+BTC/USDT,Reversión RSI,binance_spot_testnet,1,1,0,0,-6.954,-0.695,0.0,0.0,-0.695,0.0
+BTC/USDT,Votación,binance_spot_testnet,2,2,0,0,7.358,0.736,0.606,0.0,-0.061,50.0
+NVDA,Cruce MACD,alpaca_paper,1,0,1,0,0.0,0.0,0.0,0.0,0.0,
+NVDA,EMA50 + Chandelier,alpaca_paper,3,0,3,1,0.0,0.0,0.0,0.0,0.0,
+NVDA,Random Forest,alpaca_paper,2,0,2,1,0.0,0.0,0.0,0.0,0.0,
+NVDA,Votación,alpaca_paper,2,0,2,1,0.0,0.0,0.0,0.0,0.0,
+SOL/USDT,Cruce MACD,binance_spot_testnet,3,3,0,1,22.863,2.286,0.326,1.05,-1.126,33.333
+SOL/USDT,EMA50 + Chandelier,binance_spot_testnet,8,8,0,1,8.224,0.822,0.085,0.522,-2.112,37.5
+SOL/USDT,Random Forest,binance_spot_testnet,4,4,0,0,2.007,0.201,0.083,0.0,-0.854,75.0
+SOL/USDT,Votación,binance_spot_testnet,1,1,0,0,-8.542,-0.854,0.0,0.0,-0.854,0.0
+SPY,Cruce MACD,alpaca_paper,1,0,1,0,0.0,0.0,0.0,0.0,0.0,
+SPY,EMA50 + Chandelier,alpaca_paper,2,2,0,1,-9.085,-0.909,-11.859,-11.859,-0.909,0.0

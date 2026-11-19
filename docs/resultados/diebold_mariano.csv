@@ -1,0 +1,21 @@
+activo,comparacion,dm,dm_hln,p_valor,n,h,resultado
+NVDA,RF vs KNN (base),0.740956,0.735102,0.462668,443,4,Sin diferencia significativa
+NVDA,RF vs EMA50 + Chandelier,-4.1747,-4.141715,4.1e-05,443,4,RF mejor
+NVDA,RF vs Reversión RSI,2.040758,2.024633,0.043506,443,4,Reversión RSI mejor
+NVDA,RF vs Cruce MACD,1.441982,1.430588,0.153255,443,4,Sin diferencia significativa
+SOL/USDT,RF vs KNN (base),0.382332,0.379311,0.704639,443,4,Sin diferencia significativa
+SOL/USDT,RF vs EMA50 + Chandelier,-4.637098,-4.600459,6e-06,443,4,RF mejor
+SOL/USDT,RF vs Reversión RSI,1.250725,1.240843,0.215322,443,4,Sin diferencia significativa
+SOL/USDT,RF vs Cruce MACD,0.077195,0.076585,0.938988,443,4,Sin diferencia significativa
+BTC/USDT,RF vs KNN (base),-1.173452,-1.164181,0.244979,443,4,Sin diferencia significativa
+BTC/USDT,RF vs EMA50 + Chandelier,-6.983353,-6.928175,0.0,443,4,RF mejor
+BTC/USDT,RF vs Reversión RSI,1.23938,1.229587,0.219506,443,4,Sin diferencia significativa
+BTC/USDT,RF vs Cruce MACD,-0.852535,-0.845799,0.398123,443,4,Sin diferencia significativa
+SPY,RF vs KNN (base),-1.463094,-1.451534,0.147341,443,4,Sin diferencia significativa
+SPY,RF vs EMA50 + Chandelier,-4.039873,-4.007953,7.2e-05,443,4,RF mejor
+SPY,RF vs Reversión RSI,-1.221851,-1.212197,0.226085,443,4,Sin diferencia significativa
+SPY,RF vs Cruce MACD,0.893692,0.886631,0.37576,443,4,Sin diferencia significativa
+INTC,RF vs KNN (base),0.716016,0.710359,0.477856,443,4,Sin diferencia significativa
+INTC,RF vs EMA50 + Chandelier,-6.071978,-6.024001,0.0,443,4,RF mejor
+INTC,RF vs Reversión RSI,-0.630113,-0.625134,0.532206,443,4,Sin diferencia significativa
+INTC,RF vs Cruce MACD,0.025656,0.025454,0.979705,443,4,Sin diferencia significativa

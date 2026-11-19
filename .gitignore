@@ -8,3 +8,5 @@ logs/*.log
 validation/output/
 .pytest_cache/
 .streamlit/secrets.toml
+.DS_Store
+Videos referencia/

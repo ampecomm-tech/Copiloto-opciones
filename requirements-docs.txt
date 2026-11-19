@@ -1,0 +1,8 @@
+# Dependencias solo para generar los entregables (gráficas, notebook e informe en PDF).
+# La app y el bot no las necesitan.
+matplotlib>=3.8
+reportlab>=4.0
+pypdf>=4.0
+nbformat>=5.9
+nbclient>=0.10
+ipykernel>=6.29

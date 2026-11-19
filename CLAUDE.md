@@ -378,7 +378,12 @@ Feed en vivo de `events` con filtros por canal; vista tipo chat con colores por 
 - **Rutas de Streamlit**: los `url_path` de `st.navigation` en `app/main.py` no deben coincidir con los nombres de archivo de `app/pages/` (p. ej. `copiloto`), porque una URL directa ejecutaría la página automática sin el resto de la app.
 - El bot en la VM opera en Binance spot testnet y Alpaca Paper (`bot.forzar_paper: false`). Para dejarlo solo en paper interno, poner `forzar_paper: true` en `bot` y en `ejecucion` de `config.yaml`.
 
+### Entregables (19 de noviembre de 2026)
+- Informe técnico: `docs/Informe_Tecnico_Copiloto_Opciones.pdf`, generado con `scripts/generar_informe.py` a partir de `docs/resultados/` (exportado con `scripts/exportar_resultados.py` sobre una copia de la base de la VM). Los integrantes de la portada se editan en `docs/portada.yaml`.
+- Notebook ejecutado: `notebooks/validacion_cuantitativa.ipynb`, generado con `scripts/crear_notebook.py`.
+- Las dependencias de estos scripts están en `requirements-docs.txt`; la app y el bot no las necesitan.
+- La presentación ejecutiva es una presentación de claude.ai del usuario, no está en el repositorio.
+
 ### Pendiente antes de la demo (jueves 19)
-1. Registrarse en la URL pública y agregar activos al bot desde la pestaña Bot (Bitcoin y Solana → `binance_spot_testnet`, NVDA → `alpaca_paper`) para que acumule señales y operaciones.
-2. Exportar desde la pestaña Bot las tablas de hiperparámetros, métricas y Diebold-Mariano, y desde el Copiloto la tabla "Black-Scholes vs mark price de Binance", para el informe PDF.
-3. Grabar el video de respaldo y ensayar con el Centro de control abierto.
+1. Grabar el video de respaldo y ensayar con el Centro de control abierto.
+2. La red del campus (FortiGuard) bloquea la IP de la app por no tener categoría: presentar con hotspot del celular y pedir a la clase que entre con datos móviles.

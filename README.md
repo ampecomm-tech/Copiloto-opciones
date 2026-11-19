@@ -4,6 +4,52 @@ Proyecto final de Finanzas Computacionales. App web (Streamlit) donde el usuario
 
 > Nunca se opera con dinero real. La especificación completa está en [CLAUDE.md](CLAUDE.md).
 
+**App en vivo:** http://34.51.52.155:8501 · VM de Google Cloud en Querétaro, servicios systemd 24/7.
+
+## Entregables
+
+| Entregable | Dónde |
+|---|---|
+| Informe técnico en PDF | [docs/Informe_Tecnico_Copiloto_Opciones.pdf](docs/Informe_Tecnico_Copiloto_Opciones.pdf) |
+| Notebook de validación, ejecutado con datos reales | [notebooks/validacion_cuantitativa.ipynb](notebooks/validacion_cuantitativa.ipynb) |
+| Tablas y gráficas de resultados (CSV y PNG) | [docs/resultados/](docs/resultados/) |
+| Código documentado con docstrings en español | `app/`, `core/`, `quant/`, `agents/`, `bot/`, `validation/` |
+| Pruebas automáticas (35) | `tests/` |
+
+## Opciones del curso que cubre
+
+| Opción | Implementación | Archivos |
+|---|---|---|
+| 6. App financiera con IA | Streamlit con Firebase Authentication, URL pública, Gemini y Together AI, validación de ML en pantalla y panel del bot de la VM | `app/`, `agents/` |
+| 7. Black-Scholes con agentes | Precio, griegas por strike, IV por Brent y Newton, IV contra HV, mesa de agentes y alertas de cobertura | `quant/black_scholes.py`, `agents/mesa.py`, `core/positions.py` |
+| 3. Bot en VM de Google Cloud | Random Forest con simulación de 27 hiperparámetros, RMSE, MAE, MAPE, SMAPE, Variance Score, matriz de confusión, F1 y Diebold-Mariano con corrección HLN; SL, TP, trailing y tamaño por ATR; Binance spot testnet y Alpaca Paper | `bot/`, `validation/` |
+| 4. Agentes con roles | Analista de mercado, agente de sentimiento, abogado del diablo y gestor de riesgo como juez, con JSON estricto | `agents/roles.py`, `agents/mesa.py` |
+| Extra | Correlación de Pearson y frontera eficiente de Markowitz | `quant/portfolio.py` |
+
+## Resultados principales
+
+Datos reales del 17 al 19 de noviembre de 2026, exportados desde la base de la VM.
+
+| Resultado | Valor |
+|---|---|
+| Error mediano de nuestro Black-Scholes contra el mark price de Binance (400 contratos de BTC) | 0.0032 % |
+| Correlación de nuestra delta con la de Binance | 1.0000 |
+| F1 del mejor Random Forest en prueba, por activo | 0.467 a 0.575 |
+| Diebold-Mariano, RF contra EMA50 + Chandelier | RF mejor en 5 de 5 activos (p < 0.001) |
+| Diebold-Mariano, RF contra KNN | Sin diferencia significativa en 5 de 5 activos |
+| P&L del bot en el Binance spot testnet (9,000 USD virtuales) | +2.22 USD, ROI de +0.025 % |
+
+## Reproducir los resultados
+
+```bash
+pip install -r requirements.txt -r requirements-docs.txt
+python scripts/exportar_resultados.py --db data/app.db   # tablas y gráficas en docs/resultados/
+python scripts/crear_notebook.py                         # ejecuta el notebook de validación
+python scripts/generar_informe.py                        # genera el PDF; portada en docs/portada.yaml
+```
+
+`exportar_resultados.py` necesita internet para la comparación con Binance Options y para Markowitz; con `--sin-red` exporta solo lo que está en la base.
+
 ## Puesta en marcha local
 
 ```bash
@@ -23,7 +69,9 @@ Sin claves la app funciona en **modo degradado**: login demo (sin Firebase), ver
 |---|---|
 | `app/` | Streamlit: `main.py` (login + navegación), `auth.py` (Firebase), `ui.py`, `pages/1..5` |
 | `core/` | `config.py`, `db.py` (SQLite WAL), `events.py` (bus → DB + Discord + log), `tickers.py`, `positions.py`, `copiloto.py`, `execution.py` (órdenes al confirmar) |
-| `scripts/` | `check_apis.py`: prueba cada conexión externa y muestra una tabla ✅/❌ |
+| `scripts/` | `check_apis.py` (prueba cada conexión externa), `exportar_resultados.py`, `crear_notebook.py` y `generar_informe.py` (entregables) |
+| `notebooks/` | `validacion_cuantitativa.ipynb`: Black-Scholes, Monte Carlo, RF, KNN y Diebold-Mariano con datos reales |
+| `docs/` | Informe técnico en PDF, datos de portada y `resultados/` con tablas CSV y gráficas PNG |
 | `data_sources/` | `binance_options.py` (BTC, ETH, BNB, SOL, XRP, DOGE), `alpaca.py` (acciones + órdenes paper), `deribit.py` (órdenes de opciones cripto en testnet), `yf_options.py` (respaldo), `market.py` (velas, IV), `news.py` |
 | `quant/` | `black_scholes.py`, `volatility.py`, `strategies_options.py`, `selector.py`, `montecarlo.py`, `viability.py`, `portfolio.py` |
 | `agents/` | `together_client.py` (mesa), `gemini_client.py` (apoyo + analista + respaldo), `grok_sentiment.py` (X), `roles.py`, `mesa.py` |
