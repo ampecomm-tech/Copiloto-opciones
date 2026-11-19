@@ -159,6 +159,63 @@ def ordenar_alpaca(estrategia: dict[str, Any]) -> dict[str, Any]:
             "detalle": f"Orden {'multipata ' if len(legs) > 1 else ''}en Alpaca Paper (límite neto {limite:+.2f})" + (" · mercado cerrado: queda en cola hasta la apertura" if abierto is False else "")}
 
 
+# ---------- Venue previsto (sin enviar nada) ----------
+
+def filtrar_cadena_deribit(cadena: Any, activo: str) -> tuple[Any, int]:
+    """Deja en la cadena de Binance solo los contratos que también existen en el testnet de Deribit.
+
+    Deribit es el único venue cripto con contraparte que llena órdenes, así que conviene que las candidatas se
+    armen con contratos que pueda ejecutar. Devuelve la cadena original si Deribit no aplica o no responde.
+
+    Returns:
+        (cadena filtrada o la original, número de contratos que existen en Deribit; −1 si no se filtró).
+    """
+    if venue_cripto() != "deribit_testnet" or str(activo).upper() not in deribit.MONEDAS or cadena is None or len(cadena) == 0:
+        return cadena, -1
+    try:
+        idx = deribit.instrumentos(activo)
+    except Exception as e:
+        log_app.warning("No se pudieron leer los instrumentos de Deribit: %s", e)
+        return cadena, -1
+    claves = cadena["expiry"].astype(str) + "|" + cadena["strike"].astype(float).map(lambda k: f"{k:g}") + "|" + cadena["type"].astype(str)
+    mascara = claves.isin(set(idx))
+    return cadena[mascara], int(mascara.sum())
+
+
+def venue_previsto(estrategia: dict[str, Any], venue_objetivo: str) -> dict[str, str]:
+    """A qué venue irá la estrategia al confirmar, revisando el mapeo de cada pata sin enviar órdenes.
+
+    Returns:
+        `{"venue", "texto"}` con una explicación corta para mostrar antes de confirmar.
+    """
+    if str(cfg("ejecucion", "forzar_paper", default=False)).lower() == "true":
+        return {"venue": "paper", "texto": "Paper interno: la ejecución está forzada a paper en config.yaml."}
+    if venue_objetivo not in ("binance_options_testnet", "deribit_testnet", "cripto"):
+        return {"venue": venue_objetivo, "texto": ""}
+    activo = str(estrategia.get("activo", "")).upper()
+    motivo = ""
+    if venue_cripto() == "deribit_testnet" and deribit.disponible():
+        if activo in deribit.MONEDAS:
+            try:
+                for leg in estrategia["legs"]:
+                    deribit.mapear_pata(activo, leg)
+                return {"venue": "deribit_testnet", "texto": "Todas las patas existen en el testnet de Deribit."}
+            except Exception as e:
+                motivo = str(e)
+        else:
+            motivo = f"Deribit testnet no tiene opciones de {activo}"
+    if gate_respaldo_activo():
+        try:
+            for leg in estrategia["legs"]:
+                gate_options.mapear_pata(activo, leg)
+            minutos = int(cfg("ejecucion", "gate_minutos_espera", default=10))
+            return {"venue": "gate_options_testnet",
+                    "texto": f"{motivo}. Irá al testnet de Gate.io; su libro no tiene contraparte, así que si nadie la llena en {minutos} min pasará a paper interno."}
+        except Exception as e:
+            motivo = f"{motivo}; Gate.io: {e}" if motivo else str(e)
+    return {"venue": "paper", "texto": f"Irá a paper interno: {motivo}."}
+
+
 # ---------- Enrutador ----------
 
 def ejecutar(estrategia: dict[str, Any], venue_objetivo: str, user_id: str | None = None) -> dict[str, Any]:

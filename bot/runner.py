@@ -17,12 +17,13 @@ from typing import Any
 import pandas as pd
 
 from bot import risk
-from bot.executor import ejecutar_orden, reconciliar
+from bot.executor import _forzar_paper, ejecutar_neta_alpaca, ejecutar_orden, neta_de_estrategias, reconciliar
 from bot.features import atr
 from bot.strategies import crear
 from core import db
 from core.config import cfg
 from core.events import emit, log_bot
+from data_sources import alpaca
 from data_sources.market import velas
 
 _corriendo = True
@@ -93,7 +94,12 @@ def venue_de_cierre(asset: dict[str, Any], pos: dict[str, Any]) -> str:
 def _cerrar(asset: dict[str, Any], estado: dict[str, Any], pos: dict[str, Any], precio: float, razon: str) -> None:
     """Cierra la posición abierta en el venue donde se abrió, registra el trade y actualiza capital y P&L diario."""
     lado_orden = "sell" if pos["side"] == "long" else "buy"
-    orden = ejecutar_orden(asset["symbol"], venue_de_cierre(asset, pos), lado_orden, pos["qty"], precio)
+    venue = venue_de_cierre(asset, pos)
+    if venue == "alpaca_paper":
+        objetivo = neta_de_estrategias(asset["id"], venue, excluir=estado["strategy"])
+        orden = ejecutar_neta_alpaca(asset, estado["strategy"], objetivo, pos["qty"], lado_orden, precio)
+    else:
+        orden = ejecutar_orden(asset["symbol"], venue, lado_orden, pos["qty"], precio)
     px = orden["precio"]
     pnl = (px - pos["entry_price"]) * pos["qty"] if pos["side"] == "long" else (pos["entry_price"] - px) * pos["qty"]
     nuevo_capital = estado["capital"] + pnl
@@ -124,9 +130,15 @@ def _abrir(asset: dict[str, Any], estado: dict[str, Any], lado: str, precio: flo
     """Abre una posición con tamaño por volatilidad y SL/TP por ATR; la vela de entrada queda marcada como revisada."""
     paso = 0.001 if asset["market_type"] == "cripto" else 1.0 if asset["venue"] == "paper" and asset["market_type"] != "cripto" else 1e-4
     qty = risk.tamano_posicion(estado["capital"], precio, atr_valor, paso=paso)
+    if asset["venue"] == "alpaca_paper" and lado == "short":
+        qty = float(int(qty))  # Alpaca solo acepta cortos en acciones enteras
     if qty <= 0:
         return
-    orden = ejecutar_orden(asset["symbol"], asset["venue"], "buy" if lado == "long" else "sell", qty, precio, abre_corto=lado == "short")
+    if asset["venue"] == "alpaca_paper":
+        objetivo = neta_de_estrategias(asset["id"], "alpaca_paper", excluir=estado["strategy"]) + (qty if lado == "long" else -qty)
+        orden = ejecutar_neta_alpaca(asset, estado["strategy"], objetivo, qty, "buy" if lado == "long" else "sell", precio)
+    else:
+        orden = ejecutar_orden(asset["symbol"], asset["venue"], "buy" if lado == "long" else "sell", qty, precio, abre_corto=lado == "short")
     px = orden["precio"]
     sl, tp = risk.niveles_sl_tp(px, atr_valor, lado)
     trade_id = db.ejecutar("INSERT INTO bot_trades(asset_id, strategy, side, qty, entry_price, sl, tp, entry_ts, venue_order_id) VALUES (?,?,?,?,?,?,?,?,?)",
@@ -154,6 +166,11 @@ def procesar_activo(asset: dict[str, Any]) -> None:
     hoy = datetime.now(timezone.utc).date().isoformat()
     sentimiento = _sentimiento(asset["symbol"])
     solo_cripto = asset["market_type"] == "cripto"
+    # Acciones con el mercado de EE. UU. cerrado: se registran señales, pero no se abre ni se cierra nada.
+    # Antes esas órdenes caían a paper interno; ahora esperan a que abra el mercado.
+    cerrado = asset["venue"] == "alpaca_paper" and not _forzar_paper() and alpaca.mercado_abierto() is False
+    if cerrado:
+        log_bot.info("Mercado de EE. UU. cerrado: %s solo registra señales hasta la apertura", asset["symbol"])
 
     for estado in db.consultar("SELECT * FROM bot_strategy_state WHERE asset_id = ? AND active = 1", (asset["id"],)):
         if estado.get("daily_date") != hoy:
@@ -163,7 +180,7 @@ def procesar_activo(asset: dict[str, Any]) -> None:
 
         # 1) Gestión de la posición abierta: cada vela cerrada se revisa una sola vez y nunca la vela de entrada.
         #    Primero se evalúa el stop vigente y después se mueve, porque dentro de la vela no se sabe qué ocurrió antes.
-        if pos and pos.get("vela_revisada") != ts_vela:
+        if pos and pos.get("vela_revisada") != ts_vela and not cerrado:
             salida = risk.evaluar_salida(pos, float(ultima["high"]), float(ultima["low"]), precio)
             if salida:
                 px = pos["tp"] if salida == "TP" else pos["sl"]
@@ -187,6 +204,9 @@ def procesar_activo(asset: dict[str, Any]) -> None:
         if s.action != "HOLD" or estado["strategy"] == "random_forest":
             emit("bot_senales", "senal", f"{asset['symbol']} [{estado['strategy']}] → {s.action} ({s.confidence:.0%}) @ {precio:,.4f}",
                  {"vela": ts_vela, **{k: v for k, v in s.details.items() if k != "por_estrategia"}, **({"por_estrategia": s.details["por_estrategia"]} if "por_estrategia" in s.details else {})})
+
+        if cerrado:
+            continue
 
         # 3) Kill-switch diario
         if risk.kill_switch_activo(float(estado["capital"]) - float(estado["daily_pnl"]), float(estado["daily_pnl"])):

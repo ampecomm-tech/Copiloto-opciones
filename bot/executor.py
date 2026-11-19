@@ -106,6 +106,117 @@ def ejecutar_orden(symbol: str, venue: str, lado: str, qty: float, precio_ref: f
         return _paper(qty, precio_ref)
 
 
+# ---------- Alpaca con órdenes netas ----------
+# Alpaca guarda una sola posición neta por acción para toda la cuenta, mientras el bot lleva una posición por
+# estrategia. Si cada estrategia mandara su propia orden, chocarían: no se puede abrir un corto con la cuenta en
+# largo, y dos órdenes opuestas seguidas se bloquean como "wash trade". Por eso, en Alpaca, cada apertura o cierre
+# mueve la cuenta a la suma de las posiciones reales de todas las estrategias y solo envía la diferencia.
+
+def es_posicion_en_broker(pos: dict[str, Any] | None, venue: str) -> bool:
+    """True si la posición de una estrategia está realmente en el broker (no se abrió en paper interno).
+
+    Para posiciones anteriores al campo `modo` se usa el id de orden guardado en `bot_trades`.
+    """
+    from core import db
+
+    if not pos or float(pos.get("qty") or 0) <= 0:
+        return False
+    modo = pos.get("modo")
+    if modo is None:
+        fila = db.consultar_uno("SELECT venue_order_id FROM bot_trades WHERE id = ?", (pos.get("trade_id"),))
+        return bool(fila and fila.get("venue_order_id"))
+    return modo == venue
+
+
+def neta_de_estrategias(asset_id: int, venue: str, excluir: str | None = None) -> float:
+    """Suma con signo de las posiciones en el broker de todas las estrategias del activo, salvo `excluir`."""
+    from core import db
+
+    total = 0.0
+    for est in db.consultar("SELECT strategy, position_json FROM bot_strategy_state WHERE asset_id = ? AND position_json IS NOT NULL", (asset_id,)):
+        if est["strategy"] == excluir:
+            continue
+        pos = db.de_json(est["position_json"], {})
+        if es_posicion_en_broker(pos, venue):
+            total += float(pos["qty"]) * (1 if pos["side"] == "long" else -1)
+    return total
+
+
+def plan_alpaca(actual: float, objetivo: float) -> list[tuple[str, float, bool]]:
+    """Órdenes para llevar la cuenta de `actual` a `objetivo` acciones: `(lado, cantidad, abre_corto)`.
+
+    Los cortos solo se admiten en acciones enteras, así que un objetivo negativo se redondea hacia cero.
+    Cruzar de largo a corto (o al revés) se parte en dos órdenes: primero cerrar y después abrir.
+    """
+    import math
+
+    if objetivo < 0:
+        objetivo = -math.floor(-objetivo + 1e-9)
+    if abs(objetivo - actual) < 1e-4:
+        return []
+    if actual > 0 > objetivo:
+        return [("sell", actual, False), ("sell", -objetivo, True)]
+    if actual < 0 < objetivo:
+        return [("buy", -actual, False), ("buy", objetivo, False)]
+    delta = objetivo - actual
+    if delta > 0:
+        return [("buy", delta, False)]
+    return [("sell", -delta, objetivo < 0)]
+
+
+def _esperar_sin_ordenes_abiertas(symbol: str) -> None:
+    """Espera a que no haya órdenes abiertas del símbolo, para no disparar el bloqueo de wash trade de Alpaca."""
+    for _ in range(int(cfg("bot", "alpaca_confirmacion_intentos", default=6)) * 2):
+        if not alpaca.ordenes_abiertas(symbol):
+            return
+        time.sleep(float(cfg("bot", "alpaca_confirmacion_espera_s", default=0.5)))
+    raise RuntimeError("hay órdenes del mismo símbolo todavía abiertas en Alpaca")
+
+
+def ejecutar_neta_alpaca(asset: dict[str, Any], estrategia: str, objetivo: float, qty: float, lado: str, precio_ref: float) -> dict[str, Any]:
+    """Lleva la cuenta de Alpaca a `objetivo` acciones netas y registra para la estrategia su propia cantidad.
+
+    Args:
+        asset: Fila de `bot_assets`.
+        estrategia: Estrategia que abre o cierra (solo para el aviso si falla).
+        objetivo: Posición neta que la cuenta debe tener después de la operación.
+        qty: Cantidad de la estrategia (lo que se registra en su posición virtual).
+        lado: "buy" o "sell", desde el punto de vista de la estrategia.
+        precio_ref: Último precio conocido.
+
+    Returns:
+        `{precio, qty, venue_order_id, modo}`. Si el neto no cambia (otra estrategia compensa), no se envía nada y
+        el modo sigue siendo `alpaca_paper`. Si Alpaca falla, cae a paper con aviso en `sistema`.
+    """
+    symbol = asset["symbol"]
+    if _forzar_paper():
+        return _paper(qty, precio_ref)
+    try:
+        if not alpaca.disponible():
+            raise RuntimeError("faltan ALPACA_API_KEY/ALPACA_SECRET_KEY")
+        if alpaca.mercado_abierto() is False:
+            raise RuntimeError("mercado de EE. UU. cerrado")
+        _esperar_sin_ordenes_abiertas(symbol)
+        actual = alpaca.posicion_neta(symbol)
+        ordenes = plan_alpaca(actual, objetivo)
+        ids, valor, cantidad = [], 0.0, 0.0
+        for lado_o, q, corto in ordenes:
+            r = _resultado_alpaca(alpaca.enviar_orden_accion(symbol, lado_o, q, corto), q, precio_ref)
+            ids.append(r["venue_order_id"])
+            valor += r["precio"] * r["qty"]
+            cantidad += r["qty"]
+        if not ordenes:
+            log_bot.info("Alpaca %s [%s]: la operación se compensa con otras estrategias, sin orden al broker", symbol, estrategia)
+        precio = valor / cantidad if cantidad > 0 else float(precio_ref)
+        return {"precio": precio, "qty": float(qty), "venue_order_id": ",".join(ids) if ids else "neteada", "modo": "alpaca_paper",
+                "neto_antes": actual, "neto_despues": objetivo}
+    except Exception as e:
+        log_bot.error("Orden neta en Alpaca falló (%s %s %s): %s", lado, qty, symbol, e)
+        emit("sistema", "warning", f"Orden del bot cayó a paper ({symbol})",
+             {"venue": "alpaca_paper", "estrategia": estrategia, "lado": lado, "qty": qty, "objetivo_neto": round(objetivo, 4), "motivo": str(e)[:300]})
+        return _paper(qty, precio_ref)
+
+
 def saldo_testnet() -> dict[str, float] | None:
     """Saldo libre en el Binance spot testnet (para mostrar en la app)."""
     ex = _binance_testnet()

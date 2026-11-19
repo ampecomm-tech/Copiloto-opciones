@@ -203,10 +203,17 @@ def _confirmar(i: int, res: dict[str, Any], recomendada: bool) -> None:
     """Fila final de la candidata: a dónde va la orden y botón para confirmarla."""
     usuario = auth.usuario_actual() or {}
     venue = res["meta"].get("venue_ejecucion", "paper")
+    previsto = res["candidatas"][i].get("venue_previsto") or {}
     st.divider()
     c1, c2 = st.columns([3, 1], vertical_alignment="center")
-    c1.caption(f"Al confirmar se envía la orden a **{NOMBRE_VENUE.get(venue, venue)}** con los precios de la tabla. "
-               "Si el venue rechaza una pata, la posición se abre en paper interno y se avisa en #sistema.")
+    if previsto.get("venue") in ("gate_options_testnet", "paper"):
+        c1.html(f"<div class='cp-titulo'>{ui.pill('Va a ' + NOMBRE_VENUE.get(previsto['venue'], previsto['venue']), 'amarillo')}</div>")
+        c1.caption(previsto.get("texto", ""))
+    else:
+        destino = previsto.get("venue") or venue
+        c1.caption(f"Al confirmar se envía la orden a **{NOMBRE_VENUE.get(destino, destino)}** con los precios de la tabla. "
+                   + (previsto.get("texto", "") + " " if previsto.get("texto") else "")
+                   + "Si el venue rechaza una pata, se intenta el respaldo y, si tampoco puede, la posición se abre en paper interno con aviso en #sistema.")
     if c2.button(f"Confirmar #{i + 1}", key=f"conf_{i}", type="primary" if recomendada else "secondary", icon=":material/check:", use_container_width=True):
         with st.spinner("Enviando la orden…"):
             pos_id, ej = copiloto.confirmar(res, i, usuario.get("user_id"))

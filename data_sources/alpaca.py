@@ -197,6 +197,22 @@ def orden(order_id: str, ttl: float = 5) -> dict[str, Any] | None:
         return None
 
 
+def posicion_neta(symbol: str) -> float:
+    """Cantidad con signo que la cuenta tiene hoy en el símbolo (sin caché); 0 si no hay posición."""
+    r = requests.get(f"{_base()}/v2/positions/{symbol}", headers=_headers(), timeout=20)
+    if r.status_code == 404:
+        return 0.0
+    r.raise_for_status()
+    return float(r.json().get("qty") or 0.0)
+
+
+def ordenes_abiertas(symbol: str) -> list[dict[str, Any]]:
+    """Órdenes todavía abiertas del símbolo (sin caché)."""
+    r = requests.get(f"{_base()}/v2/orders", headers=_headers(), params={"status": "open", "symbols": symbol}, timeout=20)
+    r.raise_for_status()
+    return r.json()
+
+
 def posiciones() -> list[dict[str, Any]]:
     """Posiciones abiertas en la cuenta paper (para reconciliar)."""
     if not disponible():

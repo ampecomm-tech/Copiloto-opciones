@@ -56,7 +56,15 @@ def analizar(opinion: Opinion, user_id: str | None = None, progreso: Callable[[s
     iv = iv_atm(cadena, S, opinion.horizonte_dias)
     ratio = ratio_iv_hv(iv, hv)
     avisar("Generando candidatas y corriendo Monte Carlo…", 0.4)
-    candidatas = seleccionar(cadena, S, opinion, r, meta["multiplicador"], meta["paso_qty"])
+    # Para BTC y ETH se prefieren contratos que existen en el testnet de Deribit, el único venue cripto que llena
+    # órdenes; si con ellos no sale ninguna candidata, se usa la cadena completa (respaldo Gate.io o paper).
+    cadena_ej, n_deribit = execution.filtrar_cadena_deribit(cadena, activo)
+    candidatas = seleccionar(cadena_ej, S, opinion, r, meta["multiplicador"], meta["paso_qty"]) if n_deribit > 0 else []
+    meta["filtro_deribit"] = {"contratos": n_deribit, "total": int(len(cadena)), "aplicado": bool(candidatas)}
+    if not candidatas:
+        candidatas = seleccionar(cadena, S, opinion, r, meta["multiplicador"], meta["paso_qty"])
+    for c in candidatas:
+        c["venue_previsto"] = execution.venue_previsto({**c, "activo": activo}, meta.get("venue_ejecucion", "paper"))
     if not candidatas:
         raise RuntimeError("No se encontraron estrategias líquidas dentro del presupuesto. Prueba con más presupuesto u otro horizonte.")
     avisar("Consultando sentimiento de X y noticias…", 0.55)
@@ -86,7 +94,7 @@ def _sin_histograma(c: dict[str, Any]) -> dict[str, Any]:
     """Copia de la candidata sin el histograma (para no inflar la DB)."""
     d = dict(c)
     if "montecarlo" in d:
-        d["montecarlo"] = {k: v for k, v in d["montecarlo"].items() if k != "histograma"}
+        d["montecarlo"] = {k: v for k, v in d["montecarlo"].items() if k not in ("histograma", "histograma_precios", "cuantiles_pnl")}
     return d
 
 

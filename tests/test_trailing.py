@@ -159,6 +159,7 @@ def cierre_prueba(tmp_path, monkeypatch):
     monkeypatch.setattr(runner, "emit", lambda *a, **k: None)
     monkeypatch.setattr(runner, "_explicar_async", lambda *a, **k: None)
     monkeypatch.setattr(runner, "ejecutar_orden", lambda s, v, l, q, p, **k: enviadas.append(v) or {"precio": p, "qty": q, "venue_order_id": None, "modo": v})
+    monkeypatch.setattr(runner, "ejecutar_neta_alpaca", lambda asset, est, obj, q, l, p: enviadas.append("alpaca_paper") or {"precio": p, "qty": q, "venue_order_id": "x", "modo": "alpaca_paper"})
     asset = db.consultar_uno("SELECT * FROM bot_assets WHERE id=?", (aid,))
     estado = db.consultar_uno("SELECT * FROM bot_strategy_state WHERE asset_id=?", (aid,))
 
