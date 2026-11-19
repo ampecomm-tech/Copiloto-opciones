@@ -258,11 +258,68 @@ def _riesgo_activo(aid: int, simbolo: str) -> None:
             filas = []
             for est, g in trades.groupby("strategy"):
                 rr = resumen_riesgo(g["pnl"].values)
-                filas.append({"Estrategia": est, "Operaciones": len(g), "P&L medio": rr.get("media"), "VaR 95%": rr.get("var_95"), "CVaR 95%": rr.get("cvar_95")})
+                filas.append({"Estrategia": est, "Operaciones": len(g), "P&L medio": float(g["pnl"].mean()),
+                              "VaR 95%": rr.get("var_95", float("nan")), "CVaR 95%": rr.get("cvar_95", float("nan"))})
             st.dataframe(pd.DataFrame(filas), hide_index=True, use_container_width=True,
                          column_config={k: st.column_config.NumberColumn(format="%.2f") for k in ("P&L medio", "VaR 95%", "CVaR 95%")})
         else:
             st.caption("Hacen falta al menos 5 operaciones cerradas para estimar la cola.")
+
+    if len(rets) > 400:
+        _caviar(aid, simbolo, rets)
+
+
+@st.cache_data(ttl=900, show_spinner=False)
+def _analisis_caviar(simbolo: str, ultima_vela: str, valores: tuple[float, ...], modelo: str) -> dict:
+    """Estimación CAViaR en caché por activo, última vela y modelo (el optimizador no se repite en cada recarga)."""
+    from quant.caviar import analizar
+
+    return analizar(list(valores), 0.05, modelo)
+
+
+def _caviar(aid: int, simbolo: str, rets: pd.Series) -> None:
+    """CAViaR al 95 %: VaR dinámico estimado por regresión de cuantiles, backtesting y comparación con el VaR histórico."""
+    from quant.caviar import MODELOS
+
+    st.space("small")
+    st.markdown("**CAViaR: VaR que cambia con el mercado (Engle y Manganelli, 2004)**")
+    st.caption("En lugar de una sola cifra para toda la muestra, CAViaR estima el VaR de cada vela a partir del VaR anterior y del último retorno, "
+               "por regresión de cuantiles. Se estima con el 70 % inicial de las velas y se evalúa en el 30 % final, que el modelo no vio; "
+               "ahí se reestima cada 100 velas usando solo datos pasados, para que se adapte si cambia la volatilidad.")
+    modelo = st.segmented_control("Especificación", list(MODELOS), default="sav", format_func=MODELOS.get, key=f"cav_mod_{aid}", required=True) or "sav"
+    with st.spinner("Estimando CAViaR…"):
+        a = _analisis_caviar(simbolo, str(rets.index[-1]), tuple(float(v) for v in rets.values), modelo)
+    m, kf, kd, ch = a["modelo"], a["kupiec_fuera"], a["kupiec_dentro"], a["christoffersen_fuera"]
+    dm, kh, pc = a.get("dm_vs_historico") or {}, a.get("kupiec_historico_fuera") or {}, a.get("perdida_cuantil_fuera") or {}
+    ui.franja_stats([
+        ("VaR CAViaR última vela", f"{-a['q_caviar'][-1]:.3f} %", f"histórico móvil {-a['q_historico'][-1]:.3f} %"),
+        ("Violaciones fuera de muestra", f"{kf['tasa']:.1%}", f"{kf['violaciones']} de {kf['n']} velas; objetivo 5 %"),
+        ("Kupiec (cobertura)", f"p = {kf['p_valor']:.3f}", "p ≥ 0.05: la tasa es compatible con 5 %"),
+        ("Christoffersen (conjunta)", f"p = {ch['p_cc']:.3f}", "p ≥ 0.05: sin rachas de violaciones"),
+        ("Diebold-Mariano vs histórico", {"modelo_1": "CAViaR mejor", "modelo_2": "Histórico mejor"}.get(dm.get("mejor"), "Sin diferencia"),
+         f"p = {dm['p_valor']:.3f} · pérdida de cuantil" if dm else "—"),
+    ])
+    st.plotly_chart(ui.grafica_caviar(rets.index, a), use_container_width=True, key=f"cav_{aid}_{modelo}", config=ui.SIN_BARRA_PLOTLY)
+    c1, c2 = st.columns([2, 3], gap="large")
+    with c1:
+        st.markdown("**Parámetros estimados**")
+        mu = a.get("modelo_ultimo") or m
+        st.dataframe(pd.DataFrame({"Parámetro": m["nombres"], "Estimación inicial": m["beta"], "Última reestimación": mu["beta"]}),
+                     hide_index=True, use_container_width=True,
+                     column_config={"Estimación inicial": st.column_config.NumberColumn(format="%.4f"), "Última reestimación": st.column_config.NumberColumn(format="%.4f")})
+        st.caption(f"Cuantil inicial q₀ = {m['q0']:.3f} %. {a.get('reestimaciones', 0)} reestimaciones fuera de muestra. "
+                   f"β1 cerca de 1 significa que el VaR tiene mucha memoria; β2 negativo, que un movimiento fuerte aumenta el VaR de la siguiente vela.")
+    with c2:
+        st.markdown("**Backtesting**")
+        filas = [{"Modelo": "CAViaR, dentro de muestra", "Violaciones": kd["violaciones"], "Velas": kd["n"], "Tasa": kd["tasa"] * 100, "Kupiec p": kd["p_valor"], "Pérdida de cuantil": m["perdida_media"]},
+                 {"Modelo": "CAViaR, fuera de muestra", "Violaciones": kf["violaciones"], "Velas": kf["n"], "Tasa": kf["tasa"] * 100, "Kupiec p": kf["p_valor"], "Pérdida de cuantil": pc.get("caviar")}]
+        if kh:
+            filas.append({"Modelo": "Histórico móvil, fuera de muestra", "Violaciones": kh["violaciones"], "Velas": kh["n"], "Tasa": kh["tasa"] * 100, "Kupiec p": kh["p_valor"], "Pérdida de cuantil": pc.get("historico")})
+        st.dataframe(pd.DataFrame(filas), hide_index=True, use_container_width=True,
+                     column_config={"Tasa": st.column_config.NumberColumn(format="%.1f%%"), "Kupiec p": st.column_config.NumberColumn(format="%.3f"),
+                                    "Pérdida de cuantil": st.column_config.NumberColumn(format="%.5f")})
+        st.caption("La pérdida de cuantil es la función que minimiza CAViaR; la menor es el mejor pronóstico del VaR. "
+                   "Diebold-Mariano compara esas pérdidas vela por vela, como en la validación del Random Forest.")
 
 def _validacion() -> None:
     """Tabla de hiperparámetros, métricas, matriz de confusión y Diebold-Mariano por activo; exporta CSV/PNG."""

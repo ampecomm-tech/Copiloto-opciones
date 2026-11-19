@@ -418,6 +418,30 @@ def grafica_var(valores: Any, r: dict[str, Any], eje_x: str, ajuste_normal: bool
                          legend=dict(orientation="h", yanchor="top", y=-0.22, x=0, font=dict(size=11)))
 
 
+def grafica_caviar(x: Any, a: dict[str, Any]) -> go.Figure:
+    """Retornos con el VaR dinámico de CAViaR, el VaR histórico móvil, las violaciones y el tramo fuera de muestra sombreado.
+
+    Args:
+        x: Fechas de cada retorno.
+        a: Resultado de `quant.caviar.analizar`.
+    """
+    import numpy as np
+
+    r, q, qh = np.asarray(a["r"]), np.asarray(a["q_caviar"]), np.asarray(a["q_historico"])
+    x = list(x)
+    viol = r < q
+    fig = go.Figure()
+    fig.add_vrect(x0=x[a["inicio_prueba"]], x1=x[-1], fillcolor=TOKENS["acento"], opacity=0.07, line_width=0,
+                  annotation_text="Fuera de muestra", annotation_position="top left", annotation_font_color=TOKENS["texto_2"])
+    fig.add_trace(go.Scatter(x=x, y=r, mode="markers", marker=dict(size=3, color=TOKENS["texto_3"]), name="Retorno por vela"))
+    fig.add_trace(go.Scatter(x=x, y=qh, mode="lines", line=dict(color=TOKENS["texto_2"], width=1.2, dash="dot"), name="VaR histórico móvil"))
+    fig.add_trace(go.Scatter(x=x, y=q, mode="lines", line=dict(color=TOKENS["acento"], width=1.8), name="VaR CAViaR"))
+    fig.add_trace(go.Scatter(x=[x[i] for i in np.flatnonzero(viol)], y=r[viol], mode="markers",
+                             marker=dict(size=6, color=TOKENS["rojo"], symbol="x"), name="Violación de CAViaR"))
+    return estilo_figura(fig, 380, yaxis_title="Retorno por vela (%)", margin=dict(l=8, r=8, t=16, b=8),
+                         legend=dict(orientation="h", yanchor="top", y=-0.12, x=0, font=dict(size=11)))
+
+
 SIN_BARRA_PLOTLY = {"displayModeBar": False}
 """`config` de `st.plotly_chart` para gráficas pequeñas donde la barra de herramientas tapa el título."""
 

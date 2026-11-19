@@ -35,7 +35,8 @@ def diebold_mariano(e1: np.ndarray, e2: np.ndarray, h: int = 1, perdida: str = "
         e1: Errores del modelo 1 (real − predicho).
         e2: Errores del modelo 2.
         h: Horizonte de pronóstico (número de rezagos de la autocovarianza a incluir = h−1).
-        perdida: "mse" (diferencial e1² − e2²) o "mae" (|e1| − |e2|).
+        perdida: "mse" (diferencial e1² − e2²), "mae" (|e1| − |e2|) o "directa" (e1 y e2 ya son pérdidas,
+            por ejemplo la pérdida de cuantil de un VaR: diferencial e1 − e2).
         alpha: Nivel de significancia para declarar un ganador.
 
     Returns:
@@ -47,7 +48,10 @@ def diebold_mariano(e1: np.ndarray, e2: np.ndarray, h: int = 1, perdida: str = "
     n = len(e1)
     if n < 5:
         return ResultadoDM(float("nan"), float("nan"), float("nan"), n, h, "empate", float("nan"))
-    d = (e1**2 - e2**2) if perdida == "mse" else (np.abs(e1) - np.abs(e2))
+    if perdida == "directa":
+        d = e1 - e2
+    else:
+        d = (e1**2 - e2**2) if perdida == "mse" else (np.abs(e1) - np.abs(e2))
     d_media = float(d.mean())
     # Varianza de largo plazo con autocovarianzas hasta h−1 (ventana rectangular)
     gamma0 = float(np.mean((d - d_media) ** 2))
