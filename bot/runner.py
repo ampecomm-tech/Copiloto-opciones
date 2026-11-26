@@ -172,6 +172,18 @@ def _abrir(asset: dict[str, Any], estado: dict[str, Any], lado: str, precio: flo
     _explicar_async(titulo, {**datos, "estrategia": estado["strategy"], "indicadores": {k: v for k, v in detalles.items() if k not in ("razon", "por_estrategia")}})
 
 
+def vela_en_formacion(inicio: Any, timeframe: str, ahora: datetime | None = None) -> bool:
+    """True si la vela que empieza en `inicio` todavía no termina (inicio + duración > ahora).
+
+    En la temporalidad base siempre se descarta la última vela (Binance la entrega en formación). En las
+    diarias se decide con esta regla: la vela de hoy de cripto sigue abierta, pero la última vela diaria de una
+    acción con el mercado cerrado ya está completa y no debe tirarse, o la señal sale con un día de retraso.
+    """
+    ahora = ahora or datetime.now(timezone.utc)
+    duracion = pd.Timedelta(timeframe.replace("m", "min") if timeframe.endswith("m") else timeframe)
+    return pd.Timestamp(inicio).tz_convert("UTC") + duracion > pd.Timestamp(ahora)
+
+
 def contexto_velas(asset: dict[str, Any], timeframe: str, base: str) -> dict[str, Any] | None:
     """Velas cerradas de una temporalidad con su precio, ATR y marca de la última vela (None si faltan datos)."""
     limite = None if timeframe == base else int(cfg("bot", "swing", "velas", default=400))
@@ -180,7 +192,7 @@ def contexto_velas(asset: dict[str, Any], timeframe: str, base: str) -> dict[str
     if len(df) < minimo:
         log_bot.warning("Sin velas %s suficientes para %s (%d)", timeframe, asset["symbol"], len(df))
         return None
-    cerradas = df.iloc[:-1]           # la última vela puede estar en formación
+    cerradas = df.iloc[:-1] if timeframe == base or vela_en_formacion(df.index[-1], timeframe) else df
     return {"df": cerradas, "ultima": cerradas.iloc[-1], "ts": str(cerradas.index[-1]), "precio": float(cerradas["close"].iloc[-1]),
             "atr": float(atr(cerradas, int(cfg("bot", "riesgo", "atr_periodo", default=14))).iloc[-1])}
 

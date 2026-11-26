@@ -80,7 +80,9 @@ def bot_swing(tmp_path, monkeypatch):
             return senal["s"]
 
     monkeypatch.setattr(runner, "crear", lambda *a: Falsa())
-    datos = {"15m": _df([100.0] * 80 + [0.0], freq="15min"), "1d": _df([100.0 + (i % 2) * 20 for i in range(40)] + [0.0])}
+    diaria = _df([100.0 + (i % 2) * 20 for i in range(40)] + [0.0])
+    diaria.index = pd.date_range(end=pd.Timestamp.now(tz="UTC").normalize(), periods=len(diaria), freq="1D")   # la última es la de hoy, en formación
+    datos = {"15m": _df([100.0] * 80 + [0.0], freq="15min"), "1d": diaria}
     monkeypatch.setattr(runner, "velas", lambda s, v, tf=None, lim=None: datos[tf or "15m"])
 
     def correr():
@@ -120,3 +122,12 @@ def test_asegurar_estrategias_agrega_las_nuevas(tmp_path, monkeypatch):
     assert n >= 3 and runner.asegurar_estrategias() == 0
     nombres = {e["strategy"] for e in db.consultar("SELECT strategy FROM bot_strategy_state WHERE asset_id=?", (aid,))}
     assert set(SWING) <= nombres
+
+
+def test_vela_diaria_completa_no_se_descarta():
+    """La vela diaria de hoy está en formación; la de ayer (p. ej. una acción con el mercado cerrado) ya terminó."""
+    ahora = pd.Timestamp("2026-11-26 18:30", tz="UTC")
+    assert runner.vela_en_formacion(pd.Timestamp("2026-11-26 00:00", tz="UTC"), "1d", ahora)
+    assert not runner.vela_en_formacion(pd.Timestamp("2026-11-25 05:00", tz="UTC"), "1d", ahora)
+    assert runner.vela_en_formacion(pd.Timestamp("2026-11-26 18:20", tz="UTC"), "15m", ahora)
+    assert not runner.vela_en_formacion(pd.Timestamp("2026-11-26 18:00", tz="UTC"), "15m", ahora)
