@@ -84,11 +84,22 @@ def _precio_liquidacion(pos: dict[str, Any], cadena, S: float, r: float) -> floa
 
 
 def valuar(pos: dict[str, Any], cadena, S: float, r: float) -> dict[str, Any]:
-    """Valor actual, P&L y griegas de una posición."""
+    """Valor actual, P&L y griegas de una posición, más el efecto de sus coberturas abiertas.
+
+    `valor`, `pnl` y `griegas` son solo de las opciones; `delta_cobertura` y `pnl_cobertura` vienen de `option_hedges`,
+    y `delta_neta`/`delta_dolares` ya las incluyen (es la exposición real al precio).
+    """
+    from core import hedging
+
     valor = _precio_liquidacion(pos, cadena, S, r)
     g = griegas_posicion(pos["legs"], S, r, pos["multiplicador"], pos["dias_transcurridos"])
     dte_rest = max(pos["legs"][0]["dte"] - pos["dias_transcurridos"], 0.0)
-    return {"valor": valor, "pnl": valor - pos["entry_cost"], "griegas": g, "delta_dolares": g["delta"] * S, "dte_restante": dte_rest, "spot": S}
+    cob = hedging.abiertas(pos["id"]) if pos.get("id") is not None else []
+    dc = float(sum(float(h["qty"]) for h in cob))
+    pnl_cob = float(sum(hedging.pnl(h, S) for h in cob))
+    neta = g["delta"] + dc
+    return {"valor": valor, "pnl": valor - pos["entry_cost"], "griegas": g, "delta_opciones": g["delta"], "delta_cobertura": dc, "delta_neta": neta,
+            "delta_dolares": neta * S, "pnl_cobertura": pnl_cob, "pnl_total": valor - pos["entry_cost"] + pnl_cob, "dte_restante": dte_rest, "spot": S}
 
 
 def cerrar_posicion(pos_id: int, valor_salida: float, user_id: str | None = None, razon: str = "manual") -> None:
@@ -98,6 +109,9 @@ def cerrar_posicion(pos_id: int, valor_salida: float, user_id: str | None = None
         return
     pnl = valor_salida - pos["entry_cost"]
     db.ejecutar("UPDATE option_positions SET status='cerrada', exit_ts=?, exit_value=?, pnl=? WHERE id=?", (db.ahora_iso(), valor_salida, pnl, pos_id))
+    from core import hedging
+
+    hedging.cerrar_de_posicion(pos_id, user_id, f"posición cerrada: {razon}")
     emit("alertas", "ok" if pnl >= 0 else "rojo", f"Posición #{pos_id} cerrada ({razon}): P&L {pnl:+,.2f} USD", {"asset": pos["asset"], "valor_salida": round(valor_salida, 2)}, user_id)
 
 
@@ -187,8 +201,12 @@ def _alertas(pos: dict[str, Any], v: dict[str, Any], c: dict[str, Any]) -> None:
         return bool(db.consultar_uno("SELECT id FROM events WHERE channel='alertas' AND title LIKE ? AND ts >= ?", (f"%#{pos['id']}%{tipo}%", hoy)))
     uid = pos.get("user_id")
     if abs(v["delta_dolares"]) > float(c.get("umbral_delta_dolares", 500)) and not ya_emitida("delta"):
+        from core import hedging
+
+        sug = hedging.sugerencia(pos, v["delta_opciones"], v["spot"])
         emit("alertas", "warning", f"Posición #{pos['id']} {pos['asset']}: delta desviada ({v['delta_dolares']:+,.0f} USD)",
-             {"sugerencia": f"Cubrir vendiendo/comprando {abs(v['griegas']['delta']):.3f} unidades del subyacente", "delta": round(v["griegas"]["delta"], 4)}, uid)
+             {"sugerencia": sug["texto"], "como": "En la app: Mis posiciones → Cubrir delta", "delta_opciones": round(v["delta_opciones"], 4),
+              "delta_cobertura": round(v["delta_cobertura"], 4), "delta_neta": round(v["delta_neta"], 4)}, uid)
     if not pos.get("ganancia_ilimitada") and pos.get("max_ganancia", 0) > 0 and v["pnl"] >= float(c.get("pct_toma_ganancia", 0.5)) * pos["max_ganancia"] and not ya_emitida("ganancia"):
         emit("alertas", "ok", f"Posición #{pos['id']} {pos['asset']}: 50% de la ganancia máxima alcanzada", {"pnl": round(v["pnl"], 2), "max_ganancia": round(pos["max_ganancia"], 2), "sugerencia": "Considerar tomar ganancia"}, uid)
     if 0 < v["dte_restante"] <= float(c.get("dias_vencimiento_alerta", 3)) and not ya_emitida("vencimiento"):
@@ -196,9 +214,12 @@ def _alertas(pos: dict[str, Any], v: dict[str, Any], c: dict[str, Any]) -> None:
 
 
 def historial_copiloto(user_id: str | None = None) -> dict[str, Any]:
-    """Recomendación vs resultado real: tasa de acierto sobre posiciones cerradas."""
+    """Recomendación vs resultado real: tasa de acierto sobre posiciones cerradas; el P&L realizado incluye las coberturas cerradas."""
     cerradas = [p for p in listar(user_id, "cerrada")]
     abiertas = [p for p in listar(user_id, "abierta")]
     aciertos = sum(1 for p in cerradas if (p.get("pnl") or 0) > 0)
+    sql = "SELECT COALESCE(SUM(h.pnl), 0) AS t FROM option_hedges h JOIN option_positions p ON p.id = h.position_id WHERE h.status='cerrada'"
+    fila = db.consultar_uno(sql + (" AND p.user_id = ?" if user_id else ""), (user_id,) if user_id else ())
+    pnl_cob = float((fila or {}).get("t") or 0.0)
     return {"cerradas": len(cerradas), "abiertas": len(abiertas), "aciertos": aciertos, "tasa_acierto": aciertos / len(cerradas) if cerradas else None,
-            "pnl_realizado": sum(p.get("pnl") or 0 for p in cerradas), "pnl_abierto": sum((p.get("last_value") or p["entry_cost"]) - p["entry_cost"] for p in abiertas)}
+            "pnl_realizado": sum(p.get("pnl") or 0 for p in cerradas) + pnl_cob, "pnl_coberturas_realizado": pnl_cob, "pnl_abierto": sum((p.get("last_value") or p["entry_cost"]) - p["entry_cost"] for p in abiertas)}

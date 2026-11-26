@@ -13,7 +13,8 @@ def griegas_portafolio(posiciones: list[dict[str, Any]], spots: dict[str, float]
     """Suma las griegas de todas las posiciones abiertas, expresadas en dólares.
 
     Args:
-        posiciones: Filas de `option_positions` con `legs` (lista) y `multiplicador`.
+        posiciones: Filas de `option_positions` con `legs` (lista) y `multiplicador`; si traen `delta_cobertura`
+            (unidades del subyacente en coberturas abiertas), se suma a la delta.
         spots: Precio actual por activo.
         r: Tasa libre de riesgo.
 
@@ -27,7 +28,7 @@ def griegas_portafolio(posiciones: list[dict[str, Any]], spots: dict[str, float]
         if not S:
             continue
         g = griegas_posicion(pos["legs"], S, r, pos.get("multiplicador", 1.0), pos.get("dias_transcurridos", 0.0))
-        fila = {"delta_dolares": g["delta"] * S, "gamma_dolares": g["gamma"] * S * S / 100, "theta_diaria": g["theta"], "vega_total": g["vega"]}
+        fila = {"delta_dolares": (g["delta"] + float(pos.get("delta_cobertura") or 0.0)) * S, "gamma_dolares": g["gamma"] * S * S / 100, "theta_diaria": g["theta"], "vega_total": g["vega"]}
         acc = por_activo.setdefault(pos["asset"], {k: 0.0 for k in total})
         for k in total:
             total[k] += fila[k]

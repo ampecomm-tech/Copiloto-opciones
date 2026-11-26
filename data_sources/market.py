@@ -51,7 +51,8 @@ def velas(symbol: str, venue: str = "paper", timeframe: str | None = None, limit
     limite = int(limite or cfg("bot", "velas_historico", default=1500))
     clave = f"{symbol}|{timeframe}|{limite}"
     ahora = time.time()
-    if clave in _CACHE and ahora - _CACHE[clave][0] < 30:
+    ttl = 30 if timeframe.endswith("m") else 300   # velas de horas o días cambian poco: 5 min de caché
+    if clave in _CACHE and ahora - _CACHE[clave][0] < ttl:
         return _CACHE[clave][1].copy()
     try:
         df = _velas_binance(symbol, timeframe, limite) if "/USDT" in symbol else _velas_yf(symbol, timeframe, limite)

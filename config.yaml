@@ -66,7 +66,20 @@ bot:
   capital_inicial_por_estrategia: 1000
   forzar_paper: false          # true = el bot no envía órdenes a Binance testnet ni Alpaca (solo paper interno)
   resumen_diario_hora_utc: 23  # hora UTC del resumen diario de Gemini en #sistema
-  estrategias_por_defecto: ["random_forest", "ema50_chandelier", "rsi_reversion", "macd_cross", "voting"]
+  estrategias_por_defecto: ["random_forest", "ema50_chandelier", "rsi_reversion", "macd_cross", "voting",
+                            "donchian_swing", "ema_pullback_swing", "rsi2_swing"]
+  swing:                       # estrategias de swing: señales en velas diarias, stop revisado cada 15 min con el ATR diario
+    timeframe: "1d"
+    velas: 400                 # velas diarias que se descargan (la SMA200 necesita al menos 202)
+    donchian_entrada: 20       # ruptura del máximo/mínimo de N días
+    donchian_salida: 10        # salida rápida: mínimo/máximo de N días
+    ema_rapida: 20
+    ema_lenta: 50
+    pullback_tolerancia: 0.01  # qué tan cerca de la EMA rápida debe llegar el retroceso (1 %)
+    rsi2_bajo: 10
+    rsi2_alto: 90
+    sma_tendencia: 200
+    sma_salida: 5
   alpaca_confirmacion_intentos: 6    # consultas para confirmar el llenado de una orden de Alpaca
   alpaca_confirmacion_espera_s: 0.5  # segundos entre consultas
   riesgo:

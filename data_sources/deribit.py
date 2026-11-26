@@ -146,3 +146,46 @@ def posiciones(moneda: str = "BTC") -> list[dict[str, Any]]:
     except Exception as e:
         log_app.warning("Posiciones de Deribit no disponibles: %s", e)
         return []
+
+
+def perpetuo(moneda: str) -> dict[str, Any]:
+    """Especificación del perpetuo inverso de la moneda (`BTC-PERPETUAL`): tamaño de contrato y mínimo, en USD."""
+    return _publico("get_instrument", instrument_name=f"{moneda.upper()}-PERPETUAL")
+
+
+def monto_perpetuo(qty_base: float, precio: float, contrato: float) -> float:
+    """USD a enviar para cubrir `qty_base` unidades del subyacente: múltiplo del tamaño de contrato (0 si no alcanza uno)."""
+    return float(round(abs(qty_base) * precio / contrato) * contrato)
+
+
+def ordenar_perpetuo(moneda: str, lado: str, qty_base: float | None = None, monto_usd: float | None = None, reduce_only: bool = False) -> dict[str, Any]:
+    """Orden a mercado en el perpetuo de Deribit testnet, para cubrir la delta de una posición de opciones.
+
+    El perpetuo es inverso: se opera en USD (`amount`, múltiplo de `contract_size`), pero su ganancia en dólares
+    equivale a tener `monto / precio` unidades del subyacente, así que la cobertura se expresa en esas unidades.
+
+    Args:
+        lado: `buy` o `sell`.
+        qty_base: Unidades del subyacente a cubrir (se convierten a USD con el precio índice).
+        monto_usd: Alternativa a `qty_base`: USD exactos (se usa al cerrar, para deshacer lo mismo que se abrió).
+        reduce_only: True al cerrar, para que la orden nunca abra en sentido contrario.
+
+    Returns:
+        `{order_id, instrumento, precio, monto_usd, qty_base}` con lo realmente ejecutado; `qty_base` lleva signo.
+    """
+    moneda = moneda.upper()
+    ins = perpetuo(moneda)
+    contrato = float(ins.get("contract_size") or 10)
+    if monto_usd is None:
+        monto_usd = monto_perpetuo(float(qty_base or 0), precio_indice(moneda), contrato)
+    monto_usd = float(round(monto_usd / contrato) * contrato)
+    if monto_usd < float(ins.get("min_trade_amount") or contrato):
+        raise RuntimeError(f"la cobertura es menor que un contrato de {ins['instrument_name']} ({contrato:g} USD)")
+    res = _privado(lado, instrument_name=ins["instrument_name"], amount=monto_usd, type="market", reduce_only=str(reduce_only).lower())
+    orden = res["order"]
+    lleno = float(orden.get("filled_amount") or 0)
+    precio = float(orden.get("average_price") or 0)
+    if lleno <= 0 or precio <= 0:
+        raise RuntimeError(f"la orden {orden.get('order_id')} no se llenó (estado {orden.get('order_state')})")
+    signo = 1 if lado == "buy" else -1
+    return {"order_id": str(orden["order_id"]), "instrumento": ins["instrument_name"], "precio": precio, "monto_usd": lleno, "qty_base": signo * lleno / precio}

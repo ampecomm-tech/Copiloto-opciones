@@ -57,6 +57,24 @@ CREATE TABLE IF NOT EXISTS option_positions (
     venue_order_ids_json TEXT
 );
 
+CREATE TABLE IF NOT EXISTS option_hedges (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    position_id INTEGER NOT NULL,
+    user_id TEXT,
+    ts TEXT NOT NULL,
+    venue TEXT NOT NULL,
+    instrumento TEXT NOT NULL,
+    qty REAL NOT NULL,
+    entry_price REAL NOT NULL,
+    order_ids_json TEXT,
+    status TEXT NOT NULL DEFAULT 'abierta',
+    exit_ts TEXT,
+    exit_price REAL,
+    pnl REAL,
+    detalle TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_hedges_pos ON option_hedges(position_id, status);
+
 CREATE TABLE IF NOT EXISTS sentiment_cache (
     asset TEXT PRIMARY KEY,
     ts TEXT NOT NULL,

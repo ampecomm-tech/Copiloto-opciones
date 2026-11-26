@@ -6,6 +6,7 @@ import streamlit as st
 
 from app import ui
 from bot.runner import registrar_activo
+from bot.strategies import timeframe_de
 from bot.trainer import entrenar_activo
 from core import db
 from core.config import RAIZ, cfg
@@ -143,7 +144,7 @@ def _activo(a: dict, cap0: float) -> None:
         eq = pd.Series([cap0] + (cap0 + t.sort_values("exit_ts")["pnl"].cumsum()).tolist()) if len(t) else pd.Series([cap0, e["capital"]])
         met = metricas_desempeno(eq, periodos_por_anio=365)
         wr = (t["pnl"] > 0).mean() if len(t) else None
-        filas.append({"Activa": bool(e["active"]), "Estrategia": e["strategy"], "Capital": float(e["capital"]), "ROI": met["roi"] * 100,
+        filas.append({"Activa": bool(e["active"]), "Estrategia": e["strategy"], "Temporalidad": timeframe_de(e["strategy"]), "Capital": float(e["capital"]), "ROI": met["roi"] * 100,
                       "Sharpe": met["sharpe"], "DD máx.": met["max_drawdown"] * 100,
                       "VaR 95%": met["var_95"] * 100 if len(t) >= 2 else None, "CVaR 95%": met["cvar_95"] * 100 if len(t) >= 2 else None,
                       "Win rate": f"{wr:.0%}" if wr is not None else "—",
@@ -154,6 +155,7 @@ def _activo(a: dict, cap0: float) -> None:
             df, hide_index=True, use_container_width=True, key=f"estr_{a['id']}", disabled=[c for c in df.columns if c != "Activa"],
             column_config={
                 "Activa": st.column_config.CheckboxColumn(help="Activa o pausa la estrategia; el bot lo lee en el siguiente ciclo, sin reiniciar"),
+                "Temporalidad": st.column_config.TextColumn(width="small", help="Velas con que la estrategia decide. Las de swing usan velas diarias y su stop se mide con el ATR diario"),
                 "Capital": st.column_config.NumberColumn(format="%.0f"),
                 "ROI": st.column_config.NumberColumn(format="%+.1f%%"),
                 "Sharpe": st.column_config.NumberColumn(format="%.2f"),

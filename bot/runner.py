@@ -2,7 +2,8 @@
 
 Cada ciclo:
 1. Lee `bot_assets` y `bot_strategy_state` (el usuario activa/pausa desde la app, sin reinicio).
-2. Por activo descarga velas; por estrategia activa genera la señal y la publica en `bot_senales`.
+2. Por activo descarga velas (15 min y, para las estrategias de swing, diarias); por estrategia activa
+   genera la señal una vez por vela de su temporalidad y la publica en `bot_senales`.
 3. Gestiona posiciones: SL/TP por ATR, kill-switch diario, entradas/salidas en `bot_operaciones`.
 4. Refresca P&L y griegas de las posiciones de opciones y emite alertas.
 """
@@ -19,7 +20,7 @@ import pandas as pd
 from bot import risk
 from bot.executor import _forzar_paper, ejecutar_neta_alpaca, ejecutar_orden, neta_de_estrategias, reconciliar
 from bot.features import atr
-from bot.strategies import crear
+from bot.strategies import crear, timeframe_de
 from core import db
 from core.config import cfg
 from core.events import emit, log_bot
@@ -50,6 +51,24 @@ def registrar_activo(symbol: str, display_name: str, market_type: str, venue: st
                     (asset_id, est, capital, datetime.now(timezone.utc).date().isoformat()))
     emit("sistema", "ok", f"Activo agregado al bot: {display_name}", {"symbol": symbol, "venue": venue, "market_type": market_type})
     return asset_id
+
+
+def asegurar_estrategias() -> int:
+    """Agrega a cada activo existente las estrategias por defecto que le falten (p. ej. las de swing nuevas).
+
+    Returns:
+        Número de combinaciones activo × estrategia creadas.
+    """
+    capital = float(cfg("bot", "capital_inicial_por_estrategia", default=1000))
+    hoy = datetime.now(timezone.utc).date().isoformat()
+    creadas = 0
+    for a in db.consultar("SELECT id FROM bot_assets"):
+        for est in cfg("bot", "estrategias_por_defecto", default=[]) or []:
+            if not db.consultar_uno("SELECT 1 FROM bot_strategy_state WHERE asset_id=? AND strategy=?", (a["id"], est)):
+                db.ejecutar("INSERT INTO bot_strategy_state(asset_id, strategy, active, capital, position_json, daily_pnl, daily_date) VALUES (?,?,1,?,NULL,0,?)",
+                            (a["id"], est, capital, hoy))
+                creadas += 1
+    return creadas
 
 
 def _explicar_async(titulo: str, datos: dict[str, Any], user_id: str | None = None) -> None:
@@ -126,7 +145,8 @@ def _actualizar_stop(asset: dict[str, Any], estado: dict[str, Any], pos: dict[st
     return nueva
 
 
-def _abrir(asset: dict[str, Any], estado: dict[str, Any], lado: str, precio: float, atr_valor: float, detalles: dict[str, Any], ts_vela: str) -> None:
+def _abrir(asset: dict[str, Any], estado: dict[str, Any], lado: str, precio: float, atr_valor: float, detalles: dict[str, Any], ts_vela: str,
+           timeframe: str | None = None) -> None:
     """Abre una posición con tamaño por volatilidad y SL/TP por ATR; la vela de entrada queda marcada como revisada."""
     paso = 0.001 if asset["market_type"] == "cripto" else 1.0 if asset["venue"] == "paper" and asset["market_type"] != "cripto" else 1e-4
     qty = risk.tamano_posicion(estado["capital"], precio, atr_valor, paso=paso)
@@ -144,28 +164,42 @@ def _abrir(asset: dict[str, Any], estado: dict[str, Any], lado: str, precio: flo
     trade_id = db.ejecutar("INSERT INTO bot_trades(asset_id, strategy, side, qty, entry_price, sl, tp, entry_ts, venue_order_id) VALUES (?,?,?,?,?,?,?,?,?)",
                            (asset["id"], estado["strategy"], lado, orden["qty"], px, sl, tp, db.ahora_iso(), orden["venue_order_id"]))
     pos = {"side": lado, "qty": orden["qty"], "entry_price": px, "sl": sl, "tp": tp, "trade_id": trade_id, "entry_ts": db.ahora_iso(),
-           "extremo": px, "trailing_activo": False, "vela_revisada": ts_vela, "modo": orden["modo"]}
+           "extremo": px, "trailing_activo": False, "vela_revisada": ts_vela, "modo": orden["modo"], "timeframe": timeframe or cfg("bot", "timeframe", default="15m")}
     db.ejecutar("UPDATE bot_strategy_state SET position_json=? WHERE asset_id=? AND strategy=?", (db.a_json(pos), asset["id"], estado["strategy"]))
-    datos = {"qty": orden["qty"], "sl": round(sl, 4), "tp": round(tp, 4), "atr": round(atr_valor, 4), "modo": orden["modo"], "razon": detalles.get("razon", "")}
+    datos = {"qty": orden["qty"], "sl": round(sl, 4), "tp": round(tp, 4), "atr": round(atr_valor, 4), "temporalidad": pos["timeframe"], "modo": orden["modo"], "razon": detalles.get("razon", "")}
     titulo = f"Apertura {lado} {asset['symbol']} [{estado['strategy']}] @ {px:,.4f}"
     emit("bot_operaciones", "entrada", titulo, datos)
     _explicar_async(titulo, {**datos, "estrategia": estado["strategy"], "indicadores": {k: v for k, v in detalles.items() if k not in ("razon", "por_estrategia")}})
 
 
+def contexto_velas(asset: dict[str, Any], timeframe: str, base: str) -> dict[str, Any] | None:
+    """Velas cerradas de una temporalidad con su precio, ATR y marca de la última vela (None si faltan datos)."""
+    limite = None if timeframe == base else int(cfg("bot", "swing", "velas", default=400))
+    df = velas(asset["symbol"], asset["venue"], timeframe, limite)
+    minimo = 60 if timeframe == base else 25
+    if len(df) < minimo:
+        log_bot.warning("Sin velas %s suficientes para %s (%d)", timeframe, asset["symbol"], len(df))
+        return None
+    cerradas = df.iloc[:-1]           # la última vela puede estar en formación
+    return {"df": cerradas, "ultima": cerradas.iloc[-1], "ts": str(cerradas.index[-1]), "precio": float(cerradas["close"].iloc[-1]),
+            "atr": float(atr(cerradas, int(cfg("bot", "riesgo", "atr_periodo", default=14))).iloc[-1])}
+
+
 def procesar_activo(asset: dict[str, Any]) -> None:
-    """Procesa todas las estrategias activas de un activo sobre su última vela cerrada."""
-    df = velas(asset["symbol"], asset["venue"])
-    if len(df) < 60:
-        log_bot.warning("Sin velas suficientes para %s", asset["symbol"])
+    """Procesa todas las estrategias activas de un activo.
+
+    Hay una temporalidad base (15 min) y otra por estrategia: las de swing generan su señal una vez por vela
+    diaria. El stop y el TP de todas se revisan en cada vela base cerrada, pero con el ATR de la temporalidad
+    de la estrategia, para que una operación de varios días no se cierre por el ruido de 15 minutos.
+    """
+    base = str(cfg("bot", "timeframe", default="15m"))
+    ctx_base = contexto_velas(asset, base, base)
+    if ctx_base is None:
         return
-    df_cerradas = df.iloc[:-1]           # la última vela puede estar en formación
-    ultima = df_cerradas.iloc[-1]
-    ts_vela = str(df_cerradas.index[-1])
-    precio = float(ultima["close"])
-    atr_valor = float(atr(df_cerradas, int(cfg("bot", "riesgo", "atr_periodo", default=14))).iloc[-1])
+    contextos: dict[str, dict[str, Any] | None] = {base: ctx_base}
+    ultima, ts_vela, precio = ctx_base["ultima"], ctx_base["ts"], ctx_base["precio"]
     hoy = datetime.now(timezone.utc).date().isoformat()
     sentimiento = _sentimiento(asset["symbol"])
-    solo_cripto = asset["market_type"] == "cripto"
     # Acciones con el mercado de EE. UU. cerrado: se registran señales, pero no se abre ni se cierra nada.
     # Antes esas órdenes caían a paper interno; ahora esperan a que abra el mercado.
     cerrado = asset["venue"] == "alpaca_paper" and not _forzar_paper() and alpaca.mercado_abierto() is False
@@ -173,12 +207,19 @@ def procesar_activo(asset: dict[str, Any]) -> None:
         log_bot.info("Mercado de EE. UU. cerrado: %s solo registra señales hasta la apertura", asset["symbol"])
 
     for estado in db.consultar("SELECT * FROM bot_strategy_state WHERE asset_id = ? AND active = 1", (asset["id"],)):
+        tf = timeframe_de(estado["strategy"])
+        if tf not in contextos:
+            contextos[tf] = contexto_velas(asset, tf, base)
+        ctx = contextos[tf]
+        if ctx is None:
+            continue
+        atr_valor = ctx["atr"]
         if estado.get("daily_date") != hoy:
             db.ejecutar("UPDATE bot_strategy_state SET daily_pnl = 0, daily_date = ? WHERE asset_id=? AND strategy=?", (hoy, asset["id"], estado["strategy"]))
             estado["daily_pnl"] = 0.0
         pos = db.de_json(estado.get("position_json"))
 
-        # 1) Gestión de la posición abierta: cada vela cerrada se revisa una sola vez y nunca la vela de entrada.
+        # 1) Gestión de la posición abierta: cada vela base cerrada se revisa una sola vez y nunca la vela de entrada.
         #    Primero se evalúa el stop vigente y después se mueve, porque dentro de la vela no se sabe qué ocurrió antes.
         if pos and pos.get("vela_revisada") != ts_vela and not cerrado:
             salida = risk.evaluar_salida(pos, float(ultima["high"]), float(ultima["low"]), precio)
@@ -190,20 +231,20 @@ def procesar_activo(asset: dict[str, Any]) -> None:
             else:
                 pos = _actualizar_stop(asset, estado, pos, float(ultima["high"]), float(ultima["low"]), atr_valor, ts_vela)
 
-        # 2) Señal solo una vez por vela cerrada
-        if estado.get("last_candle_ts") == ts_vela:
+        # 2) Señal solo una vez por vela cerrada de la temporalidad de la estrategia
+        if estado.get("last_candle_ts") == ctx["ts"]:
             continue
-        db.ejecutar("UPDATE bot_strategy_state SET last_candle_ts=? WHERE asset_id=? AND strategy=?", (ts_vela, asset["id"], estado["strategy"]))
+        db.ejecutar("UPDATE bot_strategy_state SET last_candle_ts=? WHERE asset_id=? AND strategy=?", (ctx["ts"], asset["id"], estado["strategy"]))
         try:
-            s = crear(estado["strategy"], asset["id"], sentimiento).generate_signal(df_cerradas)
+            s = crear(estado["strategy"], asset["id"], sentimiento).generate_signal(ctx["df"])
         except Exception as e:
             log_bot.error("Estrategia %s falló en %s: %s", estado["strategy"], asset["symbol"], e)
             continue
         db.ejecutar("INSERT INTO bot_signals(ts, asset_id, strategy, action, confidence, details_json) VALUES (?,?,?,?,?,?)",
                     (db.ahora_iso(), asset["id"], estado["strategy"], s.action, s.confidence, db.a_json(s.details)))
         if s.action != "HOLD" or estado["strategy"] == "random_forest":
-            emit("bot_senales", "senal", f"{asset['symbol']} [{estado['strategy']}] → {s.action} ({s.confidence:.0%}) @ {precio:,.4f}",
-                 {"vela": ts_vela, **{k: v for k, v in s.details.items() if k != "por_estrategia"}, **({"por_estrategia": s.details["por_estrategia"]} if "por_estrategia" in s.details else {})})
+            emit("bot_senales", "senal", f"{asset['symbol']} [{estado['strategy']}·{tf}] → {s.action} ({s.confidence:.0%}) @ {precio:,.4f}",
+                 {"vela": ctx["ts"], **{k: v for k, v in s.details.items() if k != "por_estrategia"}, **({"por_estrategia": s.details["por_estrategia"]} if "por_estrategia" in s.details else {})})
 
         if cerrado:
             continue
@@ -215,13 +256,16 @@ def procesar_activo(asset: dict[str, Any]) -> None:
             emit("alertas", "rojo", f"Kill-switch diario activado en {asset['symbol']} [{estado['strategy']}]", {"pnl_dia": round(float(estado["daily_pnl"]), 2)})
             continue
 
-        # 4) Entradas y salidas por señal (solo largos en spot; cortos solo en paper)
-        if s.action == "BUY" and not pos:
-            _abrir(asset, estado, "long", precio, atr_valor, s.details, ts_vela)
+        # 4) Entradas y salidas por señal (solo largos en spot; cortos solo en paper y Alpaca).
+        #    Una señal `solo_cierre` cierra la posición contraria pero nunca abre una nueva.
+        #    Se entra al precio de la última vela base (el más reciente), con el ATR de la temporalidad de la estrategia.
+        solo_cierre = bool(s.details.get("solo_cierre"))
+        if s.action == "BUY" and not pos and not solo_cierre:
+            _abrir(asset, estado, "long", precio, atr_valor, s.details, ts_vela, tf)
         elif s.action == "SELL" and pos and pos["side"] == "long":
             _cerrar(asset, estado, pos, precio, "señal")
-        elif s.action == "SELL" and not pos and asset["venue"] in ("paper", "alpaca_paper"):
-            _abrir(asset, estado, "short", precio, atr_valor, s.details, ts_vela)
+        elif s.action == "SELL" and not pos and not solo_cierre and asset["venue"] in ("paper", "alpaca_paper"):
+            _abrir(asset, estado, "short", precio, atr_valor, s.details, ts_vela, tf)
         elif s.action == "BUY" and pos and pos["side"] == "short":
             _cerrar(asset, estado, pos, precio, "señal")
 
@@ -287,6 +331,9 @@ def main() -> None:
     signal.signal(signal.SIGTERM, _parar)
     signal.signal(signal.SIGINT, _parar)
     db.inicializar()
+    nuevas = asegurar_estrategias()
+    if nuevas:
+        emit("sistema", "info", f"Estrategias nuevas agregadas a los activos del bot: {nuevas}", {"estrategias": cfg("bot", "estrategias_por_defecto")})
     emit("sistema", "ok", "Bot iniciado", {"timeframe": cfg("bot", "timeframe"), "intervalo_s": cfg("bot", "intervalo_ciclo_s"), "forzar_paper": cfg("bot", "forzar_paper", default=False)})
     try:
         rec = reconciliar()

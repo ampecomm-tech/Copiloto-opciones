@@ -75,7 +75,7 @@ def bot_prueba(tmp_path, monkeypatch):
 
     monkeypatch.setattr(runner, "crear", lambda *a: Estrategia())
     velas = {"df": None}
-    monkeypatch.setattr(runner, "velas", lambda s, v: velas["df"])
+    monkeypatch.setattr(runner, "velas", lambda s, v, *a: velas["df"])
 
     def ciclo(filas):
         """Corre un ciclo con velas (alto, bajo, cierre); agrega al final la vela en formación que el bot descarta."""

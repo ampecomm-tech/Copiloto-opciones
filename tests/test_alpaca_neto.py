@@ -87,7 +87,7 @@ def test_mercado_cerrado_no_abre_ni_cae_a_paper(bot_alpaca, monkeypatch):
     base = [(100.0, 100.0, 100.0)] * 80
     idx = pd.date_range("2026-11-18", periods=len(base), freq="15min", tz="UTC")
     df = pd.DataFrame({"open": 100.0, "high": 101.0, "low": 99.0, "close": 100.0, "volume": 1.0}, index=idx)
-    monkeypatch.setattr(runner, "velas", lambda s, v: df)
+    monkeypatch.setattr(runner, "velas", lambda s, v, *a: df)
     monkeypatch.setattr(runner, "_sentimiento", lambda s: None)
 
     class Compra:

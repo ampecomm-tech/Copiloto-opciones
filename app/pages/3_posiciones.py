@@ -5,10 +5,11 @@ import pandas as pd
 import streamlit as st
 
 from app import auth, ui
-from core import positions
+from core import hedging, positions
 from core.config import cfg
 from core.events import leer_eventos
 from quant.portfolio import griegas_portafolio
+from quant.strategies_options import griegas_posicion
 
 NOMBRE_VENUE = {"deribit_testnet": "Deribit testnet", "gate_options_testnet": "Gate.io testnet", "binance_options_testnet": "Binance Options testnet",
                 "alpaca_paper": "Alpaca Paper", "paper": "Paper interno"}
@@ -52,7 +53,7 @@ def _medidores_portafolio(gp: dict, umbral: float) -> None:
         st.caption("Lo que el portafolio gana o pierde cada día solo por el paso del tiempo. Rojo: el tiempo cuesta dinero; verde: el tiempo paga.")
 
 
-def _medidores_posicion(p: dict, S: float | None) -> None:
+def _medidores_posicion(p: dict, S: float | None, uid: str | None = None) -> None:
     """Cuatro medidores tipo válvula con las griegas de una posición, normalizadas para que se puedan comparar.
 
     - Delta por unidad del subyacente, de −1 a 1: dirección de la apuesta.
@@ -92,6 +93,63 @@ def _medidores_posicion(p: dict, S: float | None) -> None:
                 with col:
                     st.plotly_chart(fig, use_container_width=True, key=f"med_{clave}_{p['id']}", config=ui.SIN_BARRA_PLOTLY)
                     st.caption(texto)
+        st.divider()
+        _cobertura(p, S, uid)
+
+
+def _cobertura(p: dict, S: float | None, uid: str | None) -> None:
+    """Bloque de cobertura de delta de una posición: delta de opciones, coberturas abiertas, sugerencia y botones.
+
+    La sugerencia es la misma de la alerta de Discord, pero con signo y ya descontando lo cubierto. El botón
+    "Cubrir delta" abre un formulario con la cantidad editable y envía la orden al venue que corresponde.
+    """
+    if not S:
+        st.caption("Sin precio actual del subyacente: no se puede calcular la cobertura.")
+        return
+    r = float(cfg("app", "tasa_libre_riesgo", default=0.045))
+    d_op = griegas_posicion(p["legs"], S, r, p.get("multiplicador", 1.0), p.get("dias_transcurridos", 0.0))["delta"]
+    sug = hedging.sugerencia(p, d_op, S)
+    cob = hedging.abiertas(p["id"])
+    umbral = float(cfg("posiciones", "umbral_delta_dolares", default=500))
+    neta_usd = sug["delta_neta"] * S
+    st.html("<div class='cp-titulo' style='margin-top:4px'><span class='cp-titulo__texto'>Cobertura de delta</span>"
+            f"{ui.pill(f'Delta neta {neta_usd:+,.0f} USD', 'rojo' if abs(neta_usd) > umbral else 'gris')}</div>")
+    c = st.columns(3)
+    c[0].metric("Delta de las opciones", f"{d_op:+,.4g}", f"{d_op * S:+,.0f} USD", delta_color="off", delta_arrow="off")
+    c[1].metric("Cubierto", f"{sug['delta_cobertura']:+,.4g}", f"{sug['delta_cobertura'] * S:+,.0f} USD", delta_color="off", delta_arrow="off")
+    c[2].metric("Delta neta", f"{sug['delta_neta']:+,.4g}", f"{neta_usd:+,.0f} USD", delta_color="off", delta_arrow="off")
+    st.caption(f"Sugerencia: {sug['texto']}.")
+
+    dest = sug["destino"]
+    enteras = dest["enteras"]
+    with st.popover("Cubrir delta", icon=":material/shield:", disabled=sug["qty"] == 0 and not cob, use_container_width=False):
+        st.markdown(f"**Orden de cobertura · #{p['id']} {ui.esc(p['asset'])}**")
+        st.caption(f"Se envía a {hedging.NOMBRE_VENUE[dest['venue']]} ({dest['instrumento']}). Positivo compra, negativo vende. "
+                   "La cantidad sugerida deja la delta neta en cero.")
+        qty = st.number_input("Unidades del subyacente", value=float(sug["qty"]), step=1.0 if enteras else 0.001,
+                              format="%.0f" if enteras else "%.4f", key=f"cob_qty_{p['id']}")
+        st.caption(f"Aprox. {abs(qty) * S:,.0f} USD a {S:,.2f}. Delta neta después: {(sug['delta_neta'] + qty) * S:+,.0f} USD.")
+        if st.button("Enviar orden de cobertura", key=f"cob_env_{p['id']}", type="primary", use_container_width=True, disabled=qty == 0):
+            try:
+                with st.spinner("Enviando la orden…"):
+                    h = hedging.abrir(p["id"], qty, uid)
+                st.session_state["cob_msg"] = ("ok", f"Cobertura abierta: {h['detalle']}.")
+            except Exception as e:
+                st.session_state["cob_msg"] = ("error", f"No se envió la cobertura de la posición #{p['id']}: {e}")
+            st.rerun()
+    for h in cob:
+        hc = st.columns([3, 1], vertical_alignment="center")
+        g = hedging.pnl(h, S)
+        hc[0].html(f"<div class='cp-texto' style='font-size:0.85rem'>{ui.esc(h.get('detalle') or h['instrumento'])} · "
+                   f"{ui.pill(f'P&L {g:+,.2f} USD', _tono(g))}</div>")
+        if hc[1].button("Cerrar", key=f"cob_cerrar_{h['id']}", icon=":material/close:", use_container_width=True):
+            try:
+                with st.spinner("Cerrando la cobertura…"):
+                    res = hedging.cerrar(int(h["id"]), uid)
+                st.session_state["cob_msg"] = ("ok", f"Cobertura #{h['id']} cerrada a {res['precio']:,.2f}: P&L {res['pnl']:+,.2f} USD.")
+            except Exception as e:
+                st.session_state["cob_msg"] = ("error", f"No se cerró la cobertura #{h['id']}: {e}")
+            st.rerun()
 
 
 def render() -> None:
@@ -104,6 +162,10 @@ def render() -> None:
     if c2.button("Refrescar ahora", icon=":material/refresh:", use_container_width=True):
         with st.spinner("Revaluando con la cadena actual…"):
             positions.refrescar_todas()
+
+    msg = st.session_state.pop("cob_msg", None)
+    if msg:
+        (st.success if msg[0] == "ok" else st.error)(msg[1])
 
     abiertas = positions.listar(uid, "abierta")
     h = positions.historial_copiloto(uid)
@@ -122,13 +184,15 @@ def render() -> None:
                 spots[a] = S
             except Exception:
                 pass
+        for p in abiertas:
+            p["delta_cobertura"] = hedging.delta_cobertura(p["id"])
         gp = griegas_portafolio(abiertas, spots, float(cfg("app", "tasa_libre_riesgo", default=0.045)))
 
         st.space("small")
         ui.franja_stats([
             ("Posiciones abiertas", str(len(abiertas)), ", ".join(sorted({p["asset"] for p in abiertas}))),
             ("P&L abierto (USD)", ui.pill(_usd(h["pnl_abierto"]), _tono(h["pnl_abierto"])), "sin realizar"),
-            ("Delta en dólares", f"{gp['delta_dolares']:+,.0f}", "exposición al precio"),
+            ("Delta en dólares", f"{gp['delta_dolares']:+,.0f}", "con coberturas"),
             ("Theta diaria", f"{gp['theta_diaria']:+,.2f}", "USD por día"),
             ("Vega total", f"{gp['vega_total']:+,.2f}", "USD por 1% de IV"),
             ("Gamma $", f"{gp['gamma_dolares']:+,.2f}", "por 1% de movimiento"),
@@ -143,7 +207,7 @@ def render() -> None:
             act = p.get("last_update_ts")
             filas.append({"ID": p["id"], "Activo": p["asset"], "Estrategia": p["nombre"], "Venue": NOMBRE_VENUE.get(p.get("venue", "paper"), p.get("venue")),
                           "Vence": p["expiry"], "Costo": p["entry_cost"], "Valor actual": valor, "P&L": valor - p["entry_cost"],
-                          "Pérdida máx.": p["max_perdida"], "Delta": g.get("delta", 0.0), "Theta/día": g.get("theta", 0.0), "Vega": g.get("vega", 0.0),
+                          "Pérdida máx.": p["max_perdida"], "Delta": g.get("delta", 0.0), "Cubierto": p.get("delta_cobertura", 0.0), "Theta/día": g.get("theta", 0.0), "Vega": g.get("vega", 0.0),
                           "Actualizado": f"{ui.hora_local(act):%d/%m %H:%M}" if act else "—"})
         df = pd.DataFrame(filas)
         st.dataframe(
@@ -155,7 +219,8 @@ def render() -> None:
                 "Valor actual": st.column_config.NumberColumn(format="%.2f"),
                 "P&L": st.column_config.NumberColumn(format="%+.2f"),
                 "Pérdida máx.": st.column_config.NumberColumn(format="%.2f"),
-                "Delta": st.column_config.NumberColumn(format="%+.3f"),
+                "Delta": st.column_config.NumberColumn(format="%+.3f", help="Delta de las opciones, en unidades del subyacente"),
+                "Cubierto": st.column_config.NumberColumn(format="%+.4f", help="Unidades del subyacente en coberturas abiertas"),
                 "Theta/día": st.column_config.NumberColumn(format="%+.2f"),
                 "Vega": st.column_config.NumberColumn(format="%+.2f"),
             },
@@ -165,7 +230,7 @@ def render() -> None:
         st.caption("La aguja muestra dónde está cada griega dentro de su escala. Delta y gamma van por unidad del subyacente; theta y vega, como porcentaje de la pérdida máxima, "
                    "para comparar posiciones de distinto tamaño. Debajo de cada título va el valor en dólares.")
         for p in abiertas:
-            _medidores_posicion(p, spots.get(p["asset"]))
+            _medidores_posicion(p, spots.get(p["asset"]), uid)
 
         if gp["por_activo"]:
             with st.expander("Griegas por activo", icon=":material/table_chart:"):
@@ -180,7 +245,8 @@ def render() -> None:
             if cc[2].button("Cerrar en paper", key="cerrar", use_container_width=True):
                 positions.cerrar_posicion(pid, valor_cierre, uid)
                 st.rerun()
-            st.caption("El cierre se registra en paper con el valor indicado (por defecto, el último valor revaluado).")
+            st.caption("El cierre se registra en paper con el valor indicado (por defecto, el último valor revaluado). "
+                       "Sus coberturas abiertas se cierran con la orden contraria en su venue.")
 
     st.space("medium")
     st.subheader("Historial del copiloto")

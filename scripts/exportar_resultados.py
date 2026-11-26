@@ -36,7 +36,8 @@ from quant.portfolio import correlacion_pearson, frontera_eficiente, metricas_de
 
 AZUL, GRIS, ROJO, VERDE, TINTA = "#2563eb", "#94a3b8", "#dc2626", "#16a34a", "#0f172a"
 NOMBRES = {"random_forest": "Random Forest", "ema50_chandelier": "EMA50 + Chandelier", "rsi_reversion": "Reversión RSI",
-           "macd_cross": "Cruce MACD", "voting": "Votación", "knn": "KNN (base)"}
+           "macd_cross": "Cruce MACD", "voting": "Votación", "knn": "KNN (base)", "donchian_swing": "Donchian (swing, 1d)",
+           "ema_pullback_swing": "Retroceso a EMA20 (swing, 1d)", "rsi2_swing": "RSI2 (swing, 1d)"}
 
 
 def _estilo() -> None:

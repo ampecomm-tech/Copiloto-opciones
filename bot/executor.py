@@ -128,8 +128,19 @@ def es_posicion_en_broker(pos: dict[str, Any] | None, venue: str) -> bool:
     return modo == venue
 
 
+def coberturas_en_alpaca(symbol: str) -> float:
+    """Acciones netas que las coberturas abiertas del copiloto tienen en Alpaca para ese símbolo."""
+    from core import db
+
+    fila = db.consultar_uno("SELECT COALESCE(SUM(qty), 0) AS q FROM option_hedges WHERE venue = 'alpaca_paper' AND instrumento = ? AND status = 'abierta'", (symbol,))
+    return float((fila or {}).get("q") or 0.0)
+
+
 def neta_de_estrategias(asset_id: int, venue: str, excluir: str | None = None) -> float:
-    """Suma con signo de las posiciones en el broker de todas las estrategias del activo, salvo `excluir`."""
+    """Suma con signo de las posiciones en el broker de todas las estrategias del activo, salvo `excluir`.
+
+    En Alpaca también suma las coberturas abiertas del copiloto sobre el mismo símbolo, para que el bot no las deshaga.
+    """
     from core import db
 
     total = 0.0
@@ -139,7 +150,20 @@ def neta_de_estrategias(asset_id: int, venue: str, excluir: str | None = None) -
         pos = db.de_json(est["position_json"], {})
         if es_posicion_en_broker(pos, venue):
             total += float(pos["qty"]) * (1 if pos["side"] == "long" else -1)
+    if venue == "alpaca_paper":
+        fila = db.consultar_uno("SELECT symbol FROM bot_assets WHERE id = ?", (asset_id,))
+        if fila:
+            total += coberturas_en_alpaca(fila["symbol"])
     return total
+
+
+def neta_alpaca_simbolo(symbol: str, extra: float = 0.0) -> float:
+    """Posición neta que la cuenta de Alpaca debe tener en `symbol`: estrategias del bot, coberturas y `extra`."""
+    from core import db
+
+    fila = db.consultar_uno("SELECT id FROM bot_assets WHERE symbol = ? AND venue = 'alpaca_paper'", (symbol,))
+    bot = neta_de_estrategias(int(fila["id"]), "alpaca_paper") if fila else coberturas_en_alpaca(symbol)
+    return bot + extra
 
 
 def plan_alpaca(actual: float, objetivo: float) -> list[tuple[str, float, bool]]:
@@ -173,6 +197,27 @@ def _esperar_sin_ordenes_abiertas(symbol: str) -> None:
     raise RuntimeError("hay órdenes del mismo símbolo todavía abiertas en Alpaca")
 
 
+def mover_cuenta_alpaca(symbol: str, objetivo: float, precio_ref: float) -> dict[str, Any]:
+    """Lleva la cuenta de Alpaca de su posición actual a `objetivo` acciones; lanza RuntimeError si no puede.
+
+    Returns:
+        `{precio, ids, actual}`: precio promedio de lo ejecutado, ids de las órdenes y la posición antes de mover.
+    """
+    if not alpaca.disponible():
+        raise RuntimeError("faltan ALPACA_API_KEY/ALPACA_SECRET_KEY")
+    if alpaca.mercado_abierto() is False:
+        raise RuntimeError("mercado de EE. UU. cerrado")
+    _esperar_sin_ordenes_abiertas(symbol)
+    actual = alpaca.posicion_neta(symbol)
+    ids, valor, cantidad = [], 0.0, 0.0
+    for lado_o, q, corto in plan_alpaca(actual, objetivo):
+        r = _resultado_alpaca(alpaca.enviar_orden_accion(symbol, lado_o, q, corto), q, precio_ref)
+        ids.append(r["venue_order_id"])
+        valor += r["precio"] * r["qty"]
+        cantidad += r["qty"]
+    return {"precio": valor / cantidad if cantidad > 0 else float(precio_ref), "ids": ids, "actual": actual}
+
+
 def ejecutar_neta_alpaca(asset: dict[str, Any], estrategia: str, objetivo: float, qty: float, lado: str, precio_ref: float) -> dict[str, Any]:
     """Lleva la cuenta de Alpaca a `objetivo` acciones netas y registra para la estrategia su propia cantidad.
 
@@ -192,24 +237,11 @@ def ejecutar_neta_alpaca(asset: dict[str, Any], estrategia: str, objetivo: float
     if _forzar_paper():
         return _paper(qty, precio_ref)
     try:
-        if not alpaca.disponible():
-            raise RuntimeError("faltan ALPACA_API_KEY/ALPACA_SECRET_KEY")
-        if alpaca.mercado_abierto() is False:
-            raise RuntimeError("mercado de EE. UU. cerrado")
-        _esperar_sin_ordenes_abiertas(symbol)
-        actual = alpaca.posicion_neta(symbol)
-        ordenes = plan_alpaca(actual, objetivo)
-        ids, valor, cantidad = [], 0.0, 0.0
-        for lado_o, q, corto in ordenes:
-            r = _resultado_alpaca(alpaca.enviar_orden_accion(symbol, lado_o, q, corto), q, precio_ref)
-            ids.append(r["venue_order_id"])
-            valor += r["precio"] * r["qty"]
-            cantidad += r["qty"]
-        if not ordenes:
+        r = mover_cuenta_alpaca(symbol, objetivo, precio_ref)
+        if not r["ids"]:
             log_bot.info("Alpaca %s [%s]: la operación se compensa con otras estrategias, sin orden al broker", symbol, estrategia)
-        precio = valor / cantidad if cantidad > 0 else float(precio_ref)
-        return {"precio": precio, "qty": float(qty), "venue_order_id": ",".join(ids) if ids else "neteada", "modo": "alpaca_paper",
-                "neto_antes": actual, "neto_despues": objetivo}
+        return {"precio": r["precio"], "qty": float(qty), "venue_order_id": ",".join(r["ids"]) if r["ids"] else "neteada", "modo": "alpaca_paper",
+                "neto_antes": r["actual"], "neto_despues": objetivo}
     except Exception as e:
         log_bot.error("Orden neta en Alpaca falló (%s %s %s): %s", lado, qty, symbol, e)
         emit("sistema", "warning", f"Orden del bot cayó a paper ({symbol})",
